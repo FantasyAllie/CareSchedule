@@ -182,6 +182,34 @@ test('no more than 5 days in a row, counting last week', () => {
   assert(E.validate(s, WEEK).list.some(i => i.level === 'error' && /A: 6 days in a row/.test(i.msg)));
 });
 
+test('after 6+ days in a row a carer gets 2 days off in a row', () => {
+  const s = E.newState();
+  s.carers = [carer('A', 'F', true, 7), carer('B', 'F', true, 7), carer('C', 'F', true, 7)];
+  s.runs = [run('S', 'single')];
+  // last week: A worked Mon-Sat (6 days), Sunday off
+  const last = E.getWeek(s, E.addDays(WEEK, -7));
+  for (const d of [0, 1, 2, 3, 4, 5]) E.getCell(last, s.runs[0], d).slots[0].c = 'A';
+  for (let i = 0; i < 20; i++) {
+    E.autoFill(s, WEEK, { random: seeded(i) });
+    assert.notStrictEqual(E.getCell(E.getWeek(s, WEEK), s.runs[0], 0).slots[0].c, 'A', 'A back on Monday after only 1 day off');
+  }
+
+  // this week: A locked on Mon-Sat by hand, so Sunday and next Monday must be off
+  const s2 = E.newState();
+  s2.carers = s.carers; s2.runs = s.runs;
+  const w = E.getWeek(s2, WEEK);
+  for (const d of [0, 1, 2, 3, 4, 5]) E.getCell(w, s2.runs[0], d).slots[0] = { c: 'A', locked: true, override: false };
+  const next = E.addDays(WEEK, 7);
+  for (let i = 0; i < 20; i++) {
+    E.autoFill(s2, WEEK, { random: seeded(i) });
+    assert.notStrictEqual(E.getCell(w, s2.runs[0], 6).slots[0].c, 'A');
+    E.autoFill(s2, next, { random: seeded(i) });
+    assert.notStrictEqual(E.getCell(E.getWeek(s2, next), s2.runs[0], 0).slots[0].c, 'A', 'A back next Monday after only 1 day off');
+  }
+  E.getCell(E.getWeek(s2, next), s2.runs[0], 0).slots[0] = { c: 'A', locked: true, override: false };
+  assert(E.validate(s2, next).list.some(i => i.level === 'error' && /A: back on Mon after 6 days in a row/.test(i.msg)));
+});
+
 function placementsOf(s, weeks) {
   const worked = {}, runs = {}; // worked[id] = flat day list; runs[id][weekIndex] = {runId: days}
   for (const c of s.carers) { worked[c.id] = []; runs[c.id] = []; }
@@ -259,6 +287,7 @@ test('13 weeks in a row: weekends off, run pairs, days off grouped, full cover',
     for (let i = 0; i + 1 < wk.length; i++) { windows++; if (!wk[i] || !wk[i + 1]) windowsOff++; }
     let inARow = 0;
     for (const w of days) { inARow = w ? inARow + 1 : 0; assert(inARow <= 5, `${c.id} worked ${inARow} days in a row`); }
+    assert.strictEqual(E.restBreaches(d => !!days[d], 0, days.length - 1).length, 0);
     for (let i = 1; i + 1 < days.length; i++) if (!days[i]) { offDays++; if (days[i - 1] && days[i + 1]) lone++; }
     let pair = null, streak = 0;
     for (const wr of runs[c.id]) {

@@ -244,6 +244,27 @@ function longestStretch(working) {
   return best;
 }
 
+const LONG_STRETCH = 6; // after this many working days in a row...
+const REST_DAYS = 2;    // ...the carer must have this many days off in a row
+
+// Places where a carer goes back to work too soon after a long stretch: a stretch of LONG_STRETCH+ working days
+// followed by work again within REST_DAYS. Scans days `from`..`to` using working(d); returns
+// [{ end, length, back }] where `back` is the day they are working again.
+function restBreaches(working, from, to) {
+  const out = [];
+  let len = 0;
+  for (let d = from; d <= to; d++) {
+    if (working(d)) { len++; continue; }
+    if (len >= LONG_STRETCH) {
+      for (let k = 0; k < REST_DAYS; k++) {
+        if (d + k <= to && working(d + k)) { out.push({ end: d - 1, length: len, back: d + k }); break; }
+      }
+    }
+    len = 0;
+  }
+  return out;
+}
+
 // Number of weekends in a row worked, counting back from last week.
 function weekendStreak(h) {
   let n = 0;
@@ -384,6 +405,9 @@ function autoFill(state, weekStart, opts) {
     return n;
   };
   const tooManyInARow = (c, d) => maxInARow > 0 && stretchWith(c, d) > maxInARow;
+  // working day d must not cut short the 2 days off owed after a 6+ day stretch (or create a stretch that does)
+  const breaksRest = (c, d) => restBreaches(e => e === d || isWorking(c, e), d - 3 * 7, 13)
+    .some(b => b.back === d || (b.end - b.length < d && d <= b.end));
 
   // every hard rule except the days-in-a-row limit and days per week, which callers check
   const allowedHere = (c, run, d, rule, passNo) =>
@@ -393,7 +417,7 @@ function autoFill(state, weekStart, opts) {
     (!rule.needDriver || c.driver) &&
     (!rule.nonDriverOnly || !c.driver);
   const eligible = (c, run, d, rule, cap, passNo) =>
-    allowedHere(c, run, d, rule, passNo) && !tooManyInARow(c, d) && worked[c.id].size < cap(c);
+    allowedHere(c, run, d, rule, passNo) && !tooManyInARow(c, d) && !breaksRest(c, d) && worked[c.id].size < cap(c);
 
   const place = (c, run, d, cell, idx) => {
     cell.slots[idx].c = c.id;
@@ -460,7 +484,7 @@ function autoFill(state, weekStart, opts) {
           .find(x => x.i >= 0);
         if (!spot) continue;
         unplace(c, spot.r, e, spot.cell, spot.i);
-        if (!tooManyInARow(c, d) && worked[c.id].size < cap(c)) {
+        if (!tooManyInARow(c, d) && !breaksRest(c, d) && worked[c.id].size < cap(c)) {
           const ruleE = { needDriver: needsDriver(spot.r) && !hasDriver(spot.cell) };
           const y = shuffle(carers.filter(y => y !== c && eligible(y, spot.r, e, ruleE, cap, 2)), rng)[0];
           if (y) {
@@ -614,6 +638,14 @@ function validate(state, weekStart) {
       const stretch = longestStretch(d => d < 0 ? !!h.days[h.days.length + d] : d > 6 ? next[d - 7] : days[d]);
       if (stretch > maxInARow) list.push({ level: 'error', msg: `${c.name}: ${stretch} days in a row (maximum ${maxInARow})` });
     }
+    if (n) {
+      const next = nextWeek[c.id];
+      const working = d => d < 0 ? !!h.days[h.days.length + d] : d > 6 ? next[d - 7] : days[d];
+      for (const b of restBreaches(working, -7 * HISTORY_WEEKS, 13)) {
+        if (b.back < 0 || b.back > 6) continue; // reported in the week they go back to work
+        list.push({ level: 'error', msg: `${c.name}: back on ${DAYS[b.back]} after ${b.length} days in a row – needs ${REST_DAYS} days off in a row first` });
+      }
+    }
     if (n > capacity(c, true)) list.push({ level: 'error', msg: `${c.name}: ${n} days booked, maximum is ${capacity(c, true)}` });
     else if (n > capacity(c, false)) list.push({ level: 'warn', msg: `${c.name}: working an overtime day (${n} days)` });
   }
@@ -621,7 +653,7 @@ function validate(state, weekStart) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { DAYS, HISTORY_WEEKS, weekDays, longestStretch, ROTATION_WEEKS, history, weekendStreak, rotation, uid, addDays, mondayOf, newState, getWeek, getCell, carerStatus, capacity, autoFill, validate, clearUnlocked };
+  module.exports = { DAYS, HISTORY_WEEKS, weekDays, longestStretch, restBreaches, ROTATION_WEEKS, history, weekendStreak, rotation, uid, addDays, mondayOf, newState, getWeek, getCell, carerStatus, capacity, autoFill, validate, clearUnlocked };
 }
 // ===== ENGINE END =====
 </script>
@@ -985,6 +1017,8 @@ function viewSettings() {
     <div class="row"><label><input type="checkbox" id="useOvertime" ${s.useOvertime ? 'checked' : ''}> Second pass may use the agreed +1 overtime day</label></div>
     <div class="row"><label>Maximum days in a row <input type="number" min="0" max="13" id="maxInARow" value="${s.maxInARow}" style="width:60px"></label>
       <span class="muted">counts days worked at the end of last week (0 = no limit)</span></div>
+    <p class="muted">Whenever a carer ends up working 6 or more days in a row (for example added by hand), the next 2 days are kept off
+      for them, and going back sooner is flagged red.</p>
     <div class="row"><label><input type="checkbox" id="weekendRule" ${s.weekendRule !== false ? 'checked' : ''}> Weekends off: aim for every 2 weeks, never more than 2 weekends worked in a row</label></div>
     <p class="muted">Saturday and Sunday are planned first, then Monday to Friday. Order used each day: (0) runs limited to named carers,
       (1) a driver on every double-up, (2) second carer on double-ups (pass 1 uses non-drivers only, saving drivers),
