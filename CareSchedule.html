@@ -1,0 +1,833 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CareSchedule</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --text: #1d2330; --muted: #667085; --line: #d9dde5;
+    --accent: #2563eb; --accent-text: #ffffff; --err: #c62828; --err-bg: #fdecec;
+    --warn: #a15c00; --warn-bg: #fff4e0; --ok-bg: #eaf7ee; --lock: #6d28d9;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  header { display: flex; align-items: center; gap: 16px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
+  header h1 { font-size: 18px; margin: 0; }
+  nav button { background: none; border: none; padding: 8px 12px; font-size: 14px; cursor: pointer; border-radius: 6px; color: var(--muted); }
+  nav button.active { background: var(--accent); color: var(--accent-text); }
+  main { padding: 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 16px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+  button.btn { padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); cursor: pointer; font-size: 13px; }
+  button.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  button.btn.danger { color: var(--err); }
+  button.btn:hover { filter: brightness(0.96); }
+  input, select { font: inherit; padding: 4px 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); color: var(--text); }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid var(--line); padding: 6px; vertical-align: top; text-align: left; }
+  th { background: #eef1f6; font-weight: 600; }
+  .grid-wrap { overflow-x: auto; }
+  .grid td.cell { min-width: 150px; }
+  .grid td.cell.err { background: var(--err-bg); }
+  .grid td.cell.warn { background: var(--warn-bg); }
+  .grid td.cell.off { background: repeating-linear-gradient(45deg, #f0f0f0, #f0f0f0 6px, #e6e6e6 6px, #e6e6e6 12px); color: var(--muted); }
+  .slot { display: flex; gap: 4px; align-items: center; margin-bottom: 4px; }
+  .slot select { flex: 1; min-width: 0; font-size: 13px; }
+  .slot.locked select { border-color: var(--lock); box-shadow: 0 0 0 1px var(--lock) inset; }
+  .lockbtn { border: none; background: none; cursor: pointer; padding: 0 2px; font-size: 13px; opacity: .45; }
+  .slot.locked .lockbtn { opacity: 1; }
+  .shadow select { font-style: italic; }
+  .linkbtn { border: none; background: none; color: var(--accent); cursor: pointer; padding: 0; font-size: 12px; }
+  .issues { font-size: 12px; margin-top: 2px; }
+  .issues .e { color: var(--err); }
+  .issues .w { color: var(--warn); }
+  .tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 10px; background: #eef1f6; margin-right: 3px; }
+  .tag.M { background: #dbeafe; } .tag.F { background: #fce7f3; }
+  .tag.drv { background: #dcfce7; } .tag.nodrv { background: #f3f4f6; color: var(--muted); }
+  .muted { color: var(--muted); }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 10px; }
+  .row label { display: flex; gap: 6px; align-items: center; }
+  .days label { gap: 3px; margin-right: 6px; }
+  .report { white-space: pre-wrap; font-size: 13px; }
+  .under { color: var(--warn); font-weight: 600; } .over { color: var(--err); font-weight: 600; } .met { color: #1b7f3b; font-weight: 600; }
+  .legend { font-size: 12px; color: var(--muted); }
+  #print-area { display: none; }
+  @media print {
+    header, main > *:not(#print-area) { display: none !important; }
+    #print-area { display: block; }
+    #print-area table { font-size: 11px; }
+    body { background: #fff; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>CareSchedule</h1>
+  <nav id="tabs">
+    <button data-tab="schedule">Schedule</button>
+    <button data-tab="carers">Carers</button>
+    <button data-tab="runs">Runs</button>
+    <button data-tab="settings">Settings &amp; Data</button>
+  </nav>
+</header>
+<main id="app"></main>
+
+<script>
+// ===== ENGINE START (pure scheduling logic, no DOM – also used by tests) =====
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+function uid() { return Math.random().toString(36).slice(2, 10); }
+
+function addDays(iso, n) {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+
+function mondayOf(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const wd = (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7;
+  return addDays(iso, -wd);
+}
+
+function todayIso() {
+  const t = new Date();
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+}
+
+function newState() {
+  return {
+    version: 1,
+    carers: [],
+    runs: [],
+    weeks: {},
+    settings: { genderPriority: 'M', secondPass: true, useOvertime: true },
+  };
+}
+
+function slotCount(run) { return run.type === 'double' ? 2 : 1; }
+
+function getWeek(state, weekStart) {
+  if (!state.weeks[weekStart]) state.weeks[weekStart] = { cells: {} };
+  return state.weeks[weekStart];
+}
+
+// Returns the cell for run/day, creating it and resizing its slots to match the run type.
+function getCell(week, run, d) {
+  const byDay = week.cells[run.id] || (week.cells[run.id] = {});
+  const cell = byDay[d] || (byDay[d] = { slots: [], shadow: { c: null, override: false } });
+  const n = slotCount(run);
+  while (cell.slots.length < n) cell.slots.push({ c: null, locked: false, override: false });
+  if (cell.slots.length > n) cell.slots.length = n;
+  if (!cell.shadow) cell.shadow = { c: null, override: false };
+  return cell;
+}
+
+function leaveOn(carer, iso) {
+  return (carer.leave || []).find(l => l.from && l.from <= iso && iso <= (l.to || l.from)) || null;
+}
+
+// Whether a carer can be auto-assigned on day index d of the week starting weekStart.
+function carerStatus(carer, weekStart, d) {
+  if (carer.active === false) return { ok: false, code: 'INACTIVE', label: 'Inactive' };
+  if (!carer.available[d]) return { ok: false, code: 'NA', label: 'Not available' };
+  const l = leaveOn(carer, addDays(weekStart, d));
+  if (l) return { ok: false, code: l.type, label: l.type === 'AL' ? 'Annual leave' : 'Sickness' };
+  return { ok: true };
+}
+
+function genderOk(run, carer) { return run.gender === 'any' || run.gender === carer.gender; }
+
+function capacity(carer, withOvertime) {
+  return Math.min(7, Number(carer.daysPerWeek || 0) + (withOvertime && carer.overtime ? 1 : 0));
+}
+
+function cellCarers(cell) {
+  const ids = cell.slots.map(s => s.c).filter(Boolean);
+  if (cell.shadow && cell.shadow.c) ids.push(cell.shadow.c);
+  return ids;
+}
+
+// booked[d] = Set of carer ids working that day; worked[id] = Set of day indexes.
+function computeBookings(state, week) {
+  const booked = DAYS.map(() => new Set());
+  const worked = {};
+  for (const c of state.carers) worked[c.id] = new Set();
+  for (const run of state.runs) {
+    for (let d = 0; d < 7; d++) {
+      if (!run.days[d]) continue;
+      for (const id of cellCarers(getCell(week, run, d))) {
+        booked[d].add(id);
+        if (worked[id]) worked[id].add(d);
+      }
+    }
+  }
+  return { booked, worked };
+}
+
+// Runs with a gender restriction are filled before "any" runs so restricted runs aren't starved.
+function orderedRuns(runs) {
+  return runs.map((r, i) => ({ r, i }))
+    .sort((a, b) => ((a.r.gender === 'any') - (b.r.gender === 'any')) || a.i - b.i)
+    .map(x => x.r);
+}
+
+function clearUnlocked(state, weekStart) {
+  const week = getWeek(state, weekStart);
+  for (const run of state.runs) {
+    for (let d = 0; d < 7; d++) {
+      for (const s of getCell(week, run, d).slots) {
+        if (!s.locked) { s.c = null; s.override = false; }
+      }
+    }
+  }
+}
+
+/*
+ * Auto-fill the week.
+ *  Pass 1 (contracted days only):
+ *    a) every double-up run gets a driver
+ *    b) the second slot on double-ups is filled with NON-drivers only (drivers are saved for driver slots)
+ *    c) single runs get a driver
+ *  Pass 2 (optional): fill any remaining gaps with whoever is still free that day – including
+ *    spare drivers – and, if enabled, carers who have agreed to one overtime day.
+ * Locked (manually chosen) slots are never changed.
+ */
+function autoFill(state, weekStart, opts) {
+  opts = Object.assign({}, state.settings, opts || {});
+  const week = getWeek(state, weekStart);
+  clearUnlocked(state, weekStart);
+  const { booked, worked } = computeBookings(state, week);
+  const carers = state.carers.filter(c => c.active !== false);
+  const runs = orderedRuns(state.runs);
+  const doubles = runs.filter(r => r.type === 'double');
+  const singles = runs.filter(r => r.type !== 'double');
+  const log = [];
+
+  const statusCache = {};
+  const ok = (c, d) => {
+    const k = c.id + d;
+    if (!(k in statusCache)) statusCache[k] = carerStatus(c, weekStart, d).ok;
+    return statusCache[k];
+  };
+  const remainingAvail = (c, d) => {
+    let n = 0;
+    for (let e = d; e < 7; e++) if (ok(c, e) && !booked[e].has(c.id)) n++;
+    return Math.max(1, n);
+  };
+  const genderRank = c => opts.genderPriority === 'none' ? 0 : (c.gender === opts.genderPriority ? 0 : 1);
+
+  function pick(run, d, cell, idx, rule, cap) {
+    const cands = carers.filter(c =>
+      genderOk(run, c) && ok(c, d) && !booked[d].has(c.id) &&
+      worked[c.id].size < cap(c) &&
+      (!rule.needDriver || c.driver) &&
+      (!rule.nonDriverOnly || !c.driver));
+    if (!cands.length) return false;
+    const score = c => {
+      const left = cap(c) - worked[c.id].size;
+      return { urgent: left >= remainingAvail(c, d) ? 0 : 1, ratio: left / remainingAvail(c, d) };
+    };
+    cands.sort((a, b) => {
+      const sa = score(a), sb = score(b);
+      return (sa.urgent - sb.urgent) ||                                   // must work every remaining day to hit contract
+        (!rule.needDriver ? (a.driver - b.driver) : 0) ||                 // keep drivers free where a driver isn't needed
+        (run.gender === 'any' ? genderRank(a) - genderRank(b) : 0) ||    // males first (configurable)
+        (sb.ratio - sa.ratio) ||                                          // spread contracted days through the week
+        (worked[a.id].size - worked[b.id].size) ||
+        a.name.localeCompare(b.name);
+    });
+    const c = cands[0];
+    cell.slots[idx].c = c.id;
+    booked[d].add(c.id);
+    worked[c.id].add(d);
+    return true;
+  }
+
+  const hasDriver = cell => cell.slots.some(s => {
+    const c = s.c && state.carers.find(x => x.id === s.c);
+    return c && c.driver;
+  });
+  const emptyIdx = cell => cell.slots.findIndex(s => !s.c);
+
+  function runPass(passNo) {
+    const cap = c => capacity(c, passNo === 2 && opts.useOvertime);
+    let filled = 0;
+    for (let d = 0; d < 7; d++) {
+      // a) driver on every double-up
+      for (const run of doubles) {
+        if (!run.days[d]) continue;
+        const cell = getCell(week, run, d);
+        const i = emptyIdx(cell);
+        if (i >= 0 && !hasDriver(cell) && pick(run, d, cell, i, { needDriver: true }, cap)) filled++;
+      }
+      // b) second carer on double-ups (only once a driver is on it)
+      for (const run of doubles) {
+        if (!run.days[d]) continue;
+        const cell = getCell(week, run, d);
+        if (!hasDriver(cell)) continue;
+        let i;
+        while ((i = emptyIdx(cell)) >= 0) {
+          if (!pick(run, d, cell, i, { needDriver: false, nonDriverOnly: passNo === 1 }, cap)) break;
+          filled++;
+        }
+      }
+      // c) singles always need a driver
+      for (const run of singles) {
+        if (!run.days[d]) continue;
+        const cell = getCell(week, run, d);
+        const i = emptyIdx(cell);
+        if (i >= 0 && pick(run, d, cell, i, { needDriver: !hasDriver(cell) }, cap)) filled++;
+      }
+    }
+    return filled;
+  }
+
+  const f1 = runPass(1);
+  log.push(`Pass 1: filled ${f1} slot(s).`);
+  if (opts.secondPass) {
+    const f2 = runPass(2);
+    log.push(`Pass 2: filled ${f2} more slot(s) using spare carers${opts.useOvertime ? ' and agreed overtime' : ''}.`);
+  }
+  return { log, issues: validate(state, weekStart) };
+}
+
+// Checks every cell of the week against the rules. Returns { cells: {key: [issue]}, list: [issue], carers: {...} }.
+function validate(state, weekStart) {
+  const week = getWeek(state, weekStart);
+  const byId = Object.fromEntries(state.carers.map(c => [c.id, c]));
+  const cells = {};
+  const list = [];
+  const add = (runId, d, level, msg) => {
+    const key = runId + '|' + d;
+    (cells[key] || (cells[key] = [])).push({ level, msg });
+    const run = state.runs.find(r => r.id === runId);
+    list.push({ level, msg: `${run ? run.name : '?'} ${DAYS[d]}: ${msg}` });
+  };
+
+  // where each carer is placed per day
+  const placements = DAYS.map(() => ({}));
+  for (const run of state.runs) {
+    for (let d = 0; d < 7; d++) {
+      if (!run.days[d]) continue;
+      for (const id of cellCarers(getCell(week, run, d))) {
+        (placements[d][id] || (placements[d][id] = [])).push(run.id);
+      }
+    }
+  }
+
+  for (const run of state.runs) {
+    for (let d = 0; d < 7; d++) {
+      if (!run.days[d]) continue;
+      const cell = getCell(week, run, d);
+      const assigned = cell.slots.filter(s => s.c);
+      const missing = cell.slots.length - assigned.length;
+      if (missing) add(run.id, d, 'error', `${missing} carer(s) needed`);
+      if (assigned.length && !assigned.some(s => byId[s.c] && byId[s.c].driver)) add(run.id, d, 'error', 'No driver');
+      const people = cell.slots.map(s => ({ s, role: '' })).concat(cell.shadow && cell.shadow.c ? [{ s: cell.shadow, role: ' (shadow)' }] : []);
+      for (const { s, role } of people) {
+        if (!s.c) continue;
+        const c = byId[s.c];
+        if (!c) { add(run.id, d, 'error', 'Unknown carer'); continue; }
+        if (!genderOk(run, c)) add(run.id, d, 'error', `${c.name}${role}: run is ${run.gender === 'M' ? 'male' : 'female'} only`);
+        const st = carerStatus(c, weekStart, d);
+        if (!st.ok) add(run.id, d, s.override ? 'warn' : 'error', `${c.name}${role}: ${st.label}${s.override ? ' (overridden)' : ''}`);
+        if ((placements[d][c.id] || []).length > 1) add(run.id, d, 'error', `${c.name}${role}: double booked on ${DAYS[d]}`);
+      }
+    }
+  }
+
+  const carers = {};
+  for (const c of state.carers) {
+    const days = DAYS.map((_, d) => (placements[d][c.id] || []).length > 0);
+    const n = days.filter(Boolean).length;
+    carers[c.id] = { days, count: n, contracted: Number(c.daysPerWeek || 0) };
+    if (n > capacity(c, true)) list.push({ level: 'error', msg: `${c.name}: ${n} days booked, maximum is ${capacity(c, true)}` });
+    else if (n > capacity(c, false)) list.push({ level: 'warn', msg: `${c.name}: working an overtime day (${n} days)` });
+  }
+  return { cells, list, carers };
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = { DAYS, uid, addDays, mondayOf, newState, getWeek, getCell, carerStatus, capacity, autoFill, validate, clearUnlocked };
+}
+// ===== ENGINE END =====
+</script>
+
+<script>
+// ===== UI =====
+const STORE_KEY = 'careschedule.v1';
+let state = load();
+let ui = { tab: 'schedule', week: mondayOf(todayIso()), editCarer: null, editRun: null, report: null };
+
+function load() {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) return Object.assign(newState(), JSON.parse(raw));
+  } catch (e) { console.warn('Could not load saved data', e); }
+  return newState();
+}
+function save() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
+  catch (e) { alert('Could not save to browser storage. Please use "Export backup" to keep your data.'); }
+}
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])); }
+const byId = id => state.carers.find(c => c.id === id);
+const runById = id => state.runs.find(r => r.id === id);
+const sortedCarers = () => state.carers.slice().sort((a, b) => a.name.localeCompare(b.name));
+function fmtDate(iso) { const [y, m, d] = iso.split('-'); return `${d}/${m}/${y}`; }
+function genderLabel(g) { return g === 'M' ? 'Male only' : g === 'F' ? 'Female only' : 'Male or female'; }
+
+function render() {
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === ui.tab));
+  const app = document.getElementById('app');
+  app.innerHTML = { schedule: viewSchedule, carers: viewCarers, runs: viewRuns, settings: viewSettings }[ui.tab]();
+}
+
+// ---------- Schedule ----------
+function viewSchedule() {
+  if (!state.runs.length || !state.carers.length) {
+    return `<div class="panel">Add some <b>carers</b> and <b>runs</b> first, or load the sample data from <b>Settings &amp; Data</b>.</div>`;
+  }
+  const week = getWeek(state, ui.week);
+  const v = validate(state, ui.week);
+  const head = DAYS.map((d, i) => `<th>${d}<br><span class="muted">${fmtDate(addDays(ui.week, i)).slice(0, 5)}</span></th>`).join('');
+  const rows = state.runs.map(run => {
+    const tds = DAYS.map((_, d) => {
+      if (!run.days[d]) return `<td class="cell off">Not running</td>`;
+      const cell = getCell(week, run, d);
+      const iss = v.cells[run.id + '|' + d] || [];
+      const cls = iss.some(i => i.level === 'error') ? 'err' : iss.length ? 'warn' : '';
+      const slots = cell.slots.map((s, i) => `
+        <div class="slot ${s.locked ? 'locked' : ''}">
+          ${carerSelect(run, d, s.c, `data-slot="${i}"`)}
+          <button class="lockbtn" title="${s.locked ? 'Locked – auto-fill keeps this' : 'Unlocked – auto-fill may change this'}" data-action="lock" data-run="${run.id}" data-day="${d}" data-slot="${i}">${s.locked ? '🔒' : '🔓'}</button>
+        </div>`).join('');
+      const shadow = (cell.shadow.c || cell.shadowOpen)
+        ? `<div class="slot shadow">${carerSelect(run, d, cell.shadow.c, 'data-slot="shadow"', 'Shadow / training')}</div>`
+        : `<button class="linkbtn" data-action="shadow" data-run="${run.id}" data-day="${d}">+ 3rd carer (shadow)</button>`;
+      const issues = iss.map(i => `<div class="${i.level === 'error' ? 'e' : 'w'}">${esc(i.msg)}</div>`).join('');
+      return `<td class="cell ${cls}">${slots}${shadow}<div class="issues">${issues}</div></td>`;
+    }).join('');
+    return `<tr><th>${esc(run.name)}<br><span class="tag">${run.type === 'double' ? 'Double up' : 'Single'}</span><span class="tag">${run.gender === 'any' ? 'M/F' : run.gender === 'M' ? 'Male' : 'Female'}</span></th>${tds}</tr>`;
+  }).join('');
+
+  const summary = sortedCarers().filter(c => c.active !== false).map(c => {
+    const s = v.carers[c.id];
+    const cls = s.count > capacity(c, true) ? 'over' : s.count === s.contracted ? 'met' : 'under';
+    const days = DAYS.map((_, d) => {
+      const st = carerStatus(c, ui.week, d);
+      if (s.days[d]) {
+        const where = state.runs.filter(r => r.days[d] && cellIds(getCell(week, r, d)).includes(c.id)).map(r => r.name).join(', ');
+        return `<td>${esc(where)}</td>`;
+      }
+      return `<td class="muted">${st.ok ? 'free' : esc(st.label)}</td>`;
+    }).join('');
+    return `<tr><td>${esc(c.name)} <span class="tag ${c.gender}">${c.gender}</span><span class="tag ${c.driver ? 'drv' : 'nodrv'}">${c.driver ? 'Driver' : 'Non-driver'}</span></td>
+      <td class="${cls}">${s.count} / ${s.contracted}${c.overtime ? ' (+1 OT)' : ''}</td>${days}</tr>`;
+  }).join('');
+
+  const errs = v.list.filter(i => i.level === 'error').length;
+  const warns = v.list.length - errs;
+  return `
+  <div class="panel">
+    <div class="toolbar">
+      <button class="btn" data-action="prevWeek">◀</button>
+      <label>Week commencing <input type="date" id="weekPick" value="${ui.week}"></label>
+      <button class="btn" data-action="nextWeek">▶</button>
+      <span style="flex:1"></span>
+      <label><input type="checkbox" id="secondPass" ${state.settings.secondPass ? 'checked' : ''}> Double pass</label>
+      <button class="btn primary" data-action="autofill">Auto-fill week</button>
+      <button class="btn" data-action="clearUnlocked">Clear unlocked</button>
+      <button class="btn danger" data-action="clearAll">Clear all</button>
+      <button class="btn" data-action="copyPrev">Copy previous week</button>
+      <button class="btn" data-action="csv">Export CSV</button>
+      <button class="btn" data-action="print">Print</button>
+    </div>
+    <div class="legend">Choosing a carer by hand locks the slot (🔒) so auto-fill won't change it. Click the lock to unlock.
+      ${errs ? `<b class="over">${errs} problem(s)</b>` : '<b class="met">No problems</b>'}${warns ? `, <b class="under">${warns} warning(s)</b>` : ''}</div>
+    ${ui.report ? `<div class="report panel" style="margin-top:8px">${esc(ui.report)}</div>` : ''}
+    <div class="grid-wrap"><table class="grid"><thead><tr><th>Run</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>
+  </div>
+  <div class="panel">
+    <h3 style="margin-top:0">Carer summary – days booked / contracted</h3>
+    <div class="grid-wrap"><table><thead><tr><th>Carer</th><th>Days</th>${DAYS.map(d => `<th>${d}</th>`).join('')}</tr></thead><tbody>${summary}</tbody></table></div>
+  </div>
+  <div id="print-area">${printTable()}</div>`;
+}
+
+function cellIds(cell) { return cell.slots.map(s => s.c).concat(cell.shadow.c ? [cell.shadow.c] : []).filter(Boolean); }
+
+function carerSelect(run, d, selected, attrs, placeholder) {
+  const week = getWeek(state, ui.week);
+  const bookedElsewhere = new Set();
+  for (const r of state.runs) if (r.id !== run.id && r.days[d]) cellIds(getCell(week, r, d)).forEach(id => bookedElsewhere.add(id));
+  const opts = sortedCarers().filter(c => c.active !== false || c.id === selected).map(c => {
+    const notes = [];
+    const st = carerStatus(c, ui.week, d);
+    if (!st.ok) notes.push(st.code === 'AL' ? 'AL' : st.code === 'SICK' ? 'Sick' : 'N/A');
+    if (!genderOk(run, c)) notes.push('gender');
+    if (bookedElsewhere.has(c.id)) notes.push('booked');
+    const label = `${c.name} (${c.gender}${c.driver ? ', D' : ''})${notes.length ? ' – ' + notes.join(', ') : ''}`;
+    return `<option value="${c.id}" ${c.id === selected ? 'selected' : ''}>${esc(label)}</option>`;
+  }).join('');
+  return `<select data-action="assign" data-run="${run.id}" data-day="${d}" ${attrs}><option value="">${placeholder || '— empty —'}</option>${opts}</select>`;
+}
+
+function printTable() {
+  const week = getWeek(state, ui.week);
+  const name = id => (byId(id) || {}).name || '';
+  const rows = state.runs.map(run => `<tr><th>${esc(run.name)}</th>${DAYS.map((_, d) => {
+    if (!run.days[d]) return '<td>—</td>';
+    const cell = getCell(week, run, d);
+    const people = cell.slots.map(s => esc(name(s.c) || '(empty)')).join('<br>');
+    return `<td>${people}${cell.shadow.c ? `<br><i>Shadow: ${esc(name(cell.shadow.c))}</i>` : ''}</td>`;
+  }).join('')}</tr>`).join('');
+  return `<h2>Schedule – week commencing ${fmtDate(ui.week)}</h2>
+    <table><thead><tr><th>Run</th>${DAYS.map((d, i) => `<th>${d} ${fmtDate(addDays(ui.week, i)).slice(0, 5)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function assign(runId, d, slot, carerId) {
+  const run = runById(runId);
+  const week = getWeek(state, ui.week);
+  const cell = getCell(week, run, d);
+  const target = slot === 'shadow' ? cell.shadow : cell.slots[Number(slot)];
+  if (!carerId) {
+    target.c = null; target.override = false;
+    if (slot !== 'shadow') target.locked = false;
+    return true;
+  }
+  const c = byId(carerId);
+  const st = carerStatus(c, ui.week, d);
+  let override = false;
+  if (!st.ok) {
+    if (!confirm(`${c.name} is marked "${st.label}" on ${DAYS[d]}.\n\nOverride and assign them anyway (only if agreed)?`)) return false;
+    override = true;
+  }
+  if (!genderOk(run, c) && !confirm(`${run.name} is ${genderLabel(run.gender).toLowerCase()}. Assign ${c.name} anyway?`)) return false;
+  // prevent double booking: offer to move them
+  for (const r of state.runs) {
+    if (!r.days[d]) continue;
+    const other = getCell(week, r, d);
+    const spots = other.slots.concat([other.shadow]);
+    for (const s of spots) {
+      if (s.c === carerId && s !== target) {
+        if (!confirm(`${c.name} is already on ${r.name} on ${DAYS[d]}. Move them here?`)) return false;
+        s.c = null; s.override = false; if ('locked' in s) s.locked = false;
+      }
+    }
+  }
+  target.c = carerId; target.override = override;
+  if (slot !== 'shadow') target.locked = true;
+  return true;
+}
+
+function exportCsv() {
+  const week = getWeek(state, ui.week);
+  const name = id => (byId(id) || {}).name || '';
+  const q = s => `"${String(s).replace(/"/g, '""')}"`;
+  const lines = [['Run', ...DAYS.map((d, i) => `${d} ${fmtDate(addDays(ui.week, i))}`)].map(q).join(',')];
+  for (const run of state.runs) {
+    lines.push([run.name, ...DAYS.map((_, d) => {
+      if (!run.days[d]) return '-';
+      const cell = getCell(week, run, d);
+      return cell.slots.map(s => name(s.c) || '(empty)').join(' + ') + (cell.shadow.c ? ` + shadow: ${name(cell.shadow.c)}` : '');
+    })].map(q).join(','));
+  }
+  download(`schedule-${ui.week}.csv`, lines.join('\r\n'), 'text/csv');
+}
+
+function download(filename, text, type) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type }));
+  a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// ---------- Carers ----------
+function blankCarer() {
+  return { id: uid(), name: '', gender: 'F', driver: false, daysPerWeek: 5, overtime: false, available: DAYS.map(() => true), leave: [], notes: '', active: true };
+}
+
+function viewCarers() {
+  const rows = sortedCarers().map(c => {
+    const today = todayIso();
+    const current = (c.leave || []).filter(l => (l.to || l.from) >= today).map(l => `${l.type === 'AL' ? 'AL' : 'Sick'} ${fmtDate(l.from)}${l.to && l.to !== l.from ? '–' + fmtDate(l.to) : ''}`).join('<br>');
+    return `<tr class="${c.active === false ? 'muted' : ''}">
+      <td>${esc(c.name)}${c.active === false ? ' (inactive)' : ''}</td>
+      <td><span class="tag ${c.gender}">${c.gender === 'M' ? 'Male' : 'Female'}</span></td>
+      <td><span class="tag ${c.driver ? 'drv' : 'nodrv'}">${c.driver ? 'Driver' : 'Non-driver'}</span></td>
+      <td>${c.daysPerWeek}${c.overtime ? ' + 1 overtime' : ''}</td>
+      <td>${DAYS.filter((_, i) => c.available[i]).join(', ') || 'none'}</td>
+      <td>${current || '<span class="muted">none</span>'}</td>
+      <td><button class="btn" data-action="editCarer" data-id="${c.id}">Edit</button>
+          <button class="btn danger" data-action="delCarer" data-id="${c.id}">Remove</button></td></tr>`;
+  }).join('');
+  return `
+  ${ui.editCarer ? carerForm(ui.editCarer) : ''}
+  <div class="panel">
+    <div class="toolbar"><h3 style="margin:0;flex:1">Carers (${state.carers.length})</h3>
+      <button class="btn primary" data-action="newCarer">+ Add carer</button></div>
+    <table><thead><tr><th>Name</th><th>Gender</th><th>Driver</th><th>Days / week</th><th>Can work</th><th>Upcoming leave / sickness</th><th></th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="7" class="muted">No carers yet.</td></tr>'}</tbody></table>
+  </div>`;
+}
+
+function carerForm(c) {
+  const leave = c.leave.map((l, i) => `
+    <div class="row" data-leave="${i}">
+      <select data-f="ltype"><option value="AL" ${l.type === 'AL' ? 'selected' : ''}>Annual leave</option><option value="SICK" ${l.type === 'SICK' ? 'selected' : ''}>Sickness</option></select>
+      <label>From <input type="date" data-f="lfrom" value="${l.from || ''}"></label>
+      <label>To <input type="date" data-f="lto" value="${l.to || ''}"></label>
+      <button class="btn danger" data-action="delLeave" data-i="${i}">Remove</button>
+    </div>`).join('');
+  return `
+  <div class="panel" id="carerForm">
+    <h3 style="margin-top:0">${state.carers.some(x => x.id === c.id) ? 'Edit carer' : 'New carer'}</h3>
+    <div class="row">
+      <label>Name <input data-f="name" value="${esc(c.name)}" size="24"></label>
+      <label>Gender <select data-f="gender"><option value="F" ${c.gender === 'F' ? 'selected' : ''}>Female</option><option value="M" ${c.gender === 'M' ? 'selected' : ''}>Male</option></select></label>
+      <label><input type="checkbox" data-f="driver" ${c.driver ? 'checked' : ''}> Driver</label>
+      <label>Days per week <input type="number" min="0" max="7" data-f="daysPerWeek" value="${c.daysPerWeek}" style="width:60px"></label>
+      <label><input type="checkbox" data-f="overtime" ${c.overtime ? 'checked' : ''}> Agreed +1 overtime day</label>
+      <label><input type="checkbox" data-f="active" ${c.active !== false ? 'checked' : ''}> Active</label>
+    </div>
+    <div class="row days"><b>Days they can work:</b> ${DAYS.map((d, i) => `<label><input type="checkbox" data-f="avail" data-i="${i}" ${c.available[i] ? 'checked' : ''}>${d}</label>`).join('')}</div>
+    <div class="row"><label>Notes <input data-f="notes" value="${esc(c.notes || '')}" size="60"></label></div>
+    <div><b>Annual leave / sickness</b> <span class="muted">– auto-fill will not use them on these dates (you can still assign manually with an override)</span></div>
+    ${leave}
+    <div class="toolbar" style="margin-top:8px">
+      <button class="btn" data-action="addLeave">+ Add leave / sickness</button>
+      <span style="flex:1"></span>
+      <button class="btn" data-action="cancelCarer">Cancel</button>
+      <button class="btn primary" data-action="saveCarer">Save carer</button>
+    </div>
+  </div>`;
+}
+
+function readCarerForm() {
+  const f = document.getElementById('carerForm');
+  const c = ui.editCarer;
+  const val = sel => f.querySelector(`[data-f="${sel}"]`);
+  c.name = val('name').value.trim();
+  c.gender = val('gender').value;
+  c.driver = val('driver').checked;
+  c.daysPerWeek = Math.max(0, Math.min(7, Number(val('daysPerWeek').value) || 0));
+  c.overtime = val('overtime').checked;
+  c.active = val('active').checked;
+  c.notes = val('notes').value;
+  c.available = DAYS.map((_, i) => f.querySelector(`[data-f="avail"][data-i="${i}"]`).checked);
+  c.leave = [...f.querySelectorAll('[data-leave]')].map(row => {
+    const from = row.querySelector('[data-f="lfrom"]').value;
+    const to = row.querySelector('[data-f="lto"]').value || from;
+    return { type: row.querySelector('[data-f="ltype"]').value, from, to: to < from ? from : to };
+  });
+}
+
+// ---------- Runs ----------
+function viewRuns() {
+  const rows = state.runs.map((r, i) => `
+    <tr>
+      <td><input data-action="runField" data-f="name" data-id="${r.id}" value="${esc(r.name)}"></td>
+      <td><select data-action="runField" data-f="type" data-id="${r.id}">
+        <option value="double" ${r.type === 'double' ? 'selected' : ''}>Double up (2 carers)</option>
+        <option value="single" ${r.type !== 'double' ? 'selected' : ''}>Single (1 carer)</option></select></td>
+      <td><select data-action="runField" data-f="gender" data-id="${r.id}">
+        <option value="any" ${r.gender === 'any' ? 'selected' : ''}>Male or female</option>
+        <option value="M" ${r.gender === 'M' ? 'selected' : ''}>Male only</option>
+        <option value="F" ${r.gender === 'F' ? 'selected' : ''}>Female only</option></select></td>
+      <td class="days">${DAYS.map((d, j) => `<label><input type="checkbox" data-action="runDay" data-id="${r.id}" data-i="${j}" ${r.days[j] ? 'checked' : ''}>${d}</label>`).join('')}</td>
+      <td style="white-space:nowrap">
+        <button class="btn" data-action="runUp" data-i="${i}" ${i === 0 ? 'disabled' : ''}>▲</button>
+        <button class="btn" data-action="runDown" data-i="${i}" ${i === state.runs.length - 1 ? 'disabled' : ''}>▼</button>
+        <button class="btn danger" data-action="delRun" data-id="${r.id}">Remove</button></td>
+    </tr>`).join('');
+  return `
+  <div class="panel">
+    <div class="toolbar"><h3 style="margin:0;flex:1">Runs (${state.runs.length})</h3>
+      <button class="btn primary" data-action="newRun">+ Add run</button></div>
+    <p class="muted" style="margin-top:0">Every run needs at least one driver. Changes save automatically. Untick a day if the run doesn't operate that day.</p>
+    <table><thead><tr><th>Name</th><th>Type</th><th>Carers allowed</th><th>Operates</th><th></th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="5" class="muted">No runs yet.</td></tr>'}</tbody></table>
+  </div>`;
+}
+
+// ---------- Settings ----------
+function viewSettings() {
+  const s = state.settings;
+  return `
+  <div class="panel">
+    <h3 style="margin-top:0">Auto-fill rules</h3>
+    <div class="row"><label>When choosing between carers, prefer
+      <select id="genderPriority">
+        <option value="M" ${s.genderPriority === 'M' ? 'selected' : ''}>Males first, then females</option>
+        <option value="F" ${s.genderPriority === 'F' ? 'selected' : ''}>Females first, then males</option>
+        <option value="none" ${s.genderPriority === 'none' ? 'selected' : ''}>No preference</option></select></label></div>
+    <div class="row"><label><input type="checkbox" id="secondPassSetting" ${s.secondPass ? 'checked' : ''}> Do a second pass to fill gaps with spare carers (incl. spare drivers)</label></div>
+    <div class="row"><label><input type="checkbox" id="useOvertime" ${s.useOvertime ? 'checked' : ''}> Second pass may use the agreed +1 overtime day</label></div>
+    <p class="muted">Order used by auto-fill each day: (1) a driver on every double-up, (2) second carer on double-ups (pass 1 uses non-drivers only, saving drivers),
+      (3) a driver on every single run. Male-only / female-only runs are filled before mixed runs. Nobody is booked twice on the same day,
+      nobody goes over their days per week, and anyone on leave, sick or not available that day is skipped.</p>
+  </div>
+  <div class="panel">
+    <h3 style="margin-top:0">Your data</h3>
+    <p>Everything is stored on this computer only (in this browser) – no internet needed. Export a backup regularly, and use it to move data to another computer.</p>
+    <div class="toolbar">
+      <button class="btn primary" data-action="backup">Export backup</button>
+      <label class="btn">Import backup <input type="file" id="importFile" accept=".json,application/json" hidden></label>
+      <button class="btn" data-action="sample">Load sample data</button>
+      <button class="btn danger" data-action="reset">Delete all data</button>
+    </div>
+  </div>`;
+}
+
+function sampleData() {
+  const s = newState();
+  const all = DAYS.map(() => true);
+  const mk = (name, gender, driver, days, extra) => Object.assign({ id: uid(), name, gender, driver, daysPerWeek: days, overtime: false, available: all.slice(), leave: [], notes: '', active: true }, extra || {});
+  s.carers = [
+    mk('Adam Brown', 'M', true, 5), mk('Ben Clarke', 'M', true, 4, { overtime: true }), mk('Chris Doyle', 'M', false, 5),
+    mk('Dan Evans', 'M', true, 3, { available: [true, true, true, true, true, false, false] }),
+    mk('Amy Hughes', 'F', true, 5), mk('Beth Jones', 'F', false, 5), mk('Cara King', 'F', true, 4, { overtime: true }),
+    mk('Dawn Lewis', 'F', false, 4), mk('Emma Moore', 'F', true, 5), mk('Faye Norris', 'F', false, 3),
+    mk('Gina Owen', 'F', true, 5, { leave: [{ type: 'AL', from: addDays(ui.week, 2), to: addDays(ui.week, 4) }] }),
+    mk('Hana Price', 'F', false, 5), mk('Isla Reed', 'F', true, 4),
+  ];
+  s.runs = [
+    { id: uid(), name: 'Run 1', type: 'double', gender: 'any', days: all.slice() },
+    { id: uid(), name: 'Run 2', type: 'double', gender: 'F', days: all.slice() },
+    { id: uid(), name: 'Run 3', type: 'double', gender: 'any', days: all.slice() },
+    { id: uid(), name: 'Run 4', type: 'single', gender: 'any', days: all.slice() },
+    { id: uid(), name: 'Run 5', type: 'single', gender: 'F', days: all.slice() },
+  ];
+  return s;
+}
+
+// ---------- Events ----------
+document.getElementById('tabs').addEventListener('click', e => {
+  const t = e.target.closest('button[data-tab]');
+  if (t) { ui.tab = t.dataset.tab; render(); }
+});
+
+document.getElementById('app').addEventListener('click', e => {
+  const b = e.target.closest('[data-action]');
+  if (!b || b.tagName === 'SELECT' || b.tagName === 'INPUT') return;
+  const a = b.dataset.action;
+  const week = getWeek(state, ui.week);
+  switch (a) {
+    case 'prevWeek': ui.week = addDays(ui.week, -7); ui.report = null; break;
+    case 'nextWeek': ui.week = addDays(ui.week, 7); ui.report = null; break;
+    case 'autofill': {
+      const r = autoFill(state, ui.week);
+      const errs = r.issues.list.filter(i => i.level === 'error');
+      ui.report = r.log.join('\n') + (errs.length ? `\n\nStill needs attention (${errs.length}):\n` + errs.slice(0, 30).map(i => '• ' + i.msg).join('\n') + (errs.length > 30 ? '\n…' : '') : '\n\nAll runs covered.');
+      break;
+    }
+    case 'clearUnlocked': clearUnlocked(state, ui.week); ui.report = null; break;
+    case 'clearAll': if (!confirm('Clear every assignment this week, including locked ones?')) return;
+      delete state.weeks[ui.week]; ui.report = null; break;
+    case 'copyPrev': {
+      const prev = state.weeks[addDays(ui.week, -7)];
+      if (!prev) { alert('There is no schedule for the previous week.'); return; }
+      if (!confirm('Replace this week with a copy of last week? Copied slots will be locked.')) return;
+      const copy = JSON.parse(JSON.stringify(prev));
+      for (const byDay of Object.values(copy.cells)) for (const cell of Object.values(byDay)) for (const s of cell.slots) if (s.c) s.locked = true;
+      state.weeks[ui.week] = copy; ui.report = 'Copied previous week. Check the highlighted cells for leave/sickness this week.';
+      break;
+    }
+    case 'lock': { const s = getCell(week, runById(b.dataset.run), Number(b.dataset.day)).slots[Number(b.dataset.slot)]; s.locked = !s.locked; break; }
+    case 'shadow': getCell(week, runById(b.dataset.run), Number(b.dataset.day)).shadowOpen = true; break;
+    case 'csv': exportCsv(); return;
+    case 'print': window.print(); return;
+
+    case 'newCarer': ui.editCarer = blankCarer(); break;
+    case 'editCarer': ui.editCarer = JSON.parse(JSON.stringify(byId(b.dataset.id))); break;
+    case 'cancelCarer': ui.editCarer = null; break;
+    case 'addLeave': readCarerForm(); ui.editCarer.leave.push({ type: 'AL', from: todayIso(), to: todayIso() }); render(); return;
+    case 'delLeave': readCarerForm(); ui.editCarer.leave.splice(Number(b.dataset.i), 1); render(); return;
+    case 'saveCarer': {
+      readCarerForm();
+      if (!ui.editCarer.name) { alert('Please enter a name.'); return; }
+      const i = state.carers.findIndex(c => c.id === ui.editCarer.id);
+      if (i >= 0) state.carers[i] = ui.editCarer; else state.carers.push(ui.editCarer);
+      ui.editCarer = null; break;
+    }
+    case 'delCarer': {
+      const c = byId(b.dataset.id);
+      if (!confirm(`Remove ${c.name}? They will be taken off all schedules. (Tip: untick "Active" instead to keep their history.)`)) return;
+      state.carers = state.carers.filter(x => x.id !== c.id);
+      for (const w of Object.values(state.weeks)) for (const byDay of Object.values(w.cells)) for (const cell of Object.values(byDay)) {
+        for (const s of cell.slots) if (s.c === c.id) { s.c = null; s.locked = false; }
+        if (cell.shadow && cell.shadow.c === c.id) cell.shadow.c = null;
+      }
+      break;
+    }
+
+    case 'newRun': state.runs.push({ id: uid(), name: `Run ${state.runs.length + 1}`, type: 'double', gender: 'any', days: DAYS.map(() => true) }); break;
+    case 'delRun': {
+      const r = runById(b.dataset.id);
+      if (!confirm(`Remove ${r.name}? Its assignments will be deleted.`)) return;
+      state.runs = state.runs.filter(x => x.id !== r.id);
+      for (const w of Object.values(state.weeks)) delete w.cells[r.id];
+      break;
+    }
+    case 'runUp': case 'runDown': {
+      const i = Number(b.dataset.i), j = a === 'runUp' ? i - 1 : i + 1;
+      [state.runs[i], state.runs[j]] = [state.runs[j], state.runs[i]];
+      break;
+    }
+
+    case 'backup': download(`careschedule-backup-${todayIso()}.json`, JSON.stringify(state, null, 2), 'application/json'); return;
+    case 'sample': if (state.carers.length && !confirm('Replace all current data with sample data?')) return;
+      state = sampleData(); ui.tab = 'schedule'; break;
+    case 'reset': if (!confirm('Delete ALL carers, runs and schedules? Export a backup first if unsure.')) return;
+      state = newState(); break;
+    default: return;
+  }
+  save(); render();
+});
+
+document.getElementById('app').addEventListener('change', e => {
+  const t = e.target;
+  const a = t.dataset.action;
+  if (a === 'assign') {
+    assign(t.dataset.run, Number(t.dataset.day), t.dataset.slot, t.value);
+    ui.report = null;
+  } else if (a === 'runField') {
+    const r = runById(t.dataset.id);
+    r[t.dataset.f] = t.dataset.f === 'name' ? (t.value.trim() || r.name) : t.value;
+  } else if (a === 'runDay') {
+    runById(t.dataset.id).days[Number(t.dataset.i)] = t.checked;
+  } else if (t.id === 'weekPick') {
+    if (!t.value) return;
+    ui.week = mondayOf(t.value); ui.report = null;
+  } else if (t.id === 'secondPass' || t.id === 'secondPassSetting') {
+    state.settings.secondPass = t.checked;
+  } else if (t.id === 'useOvertime') {
+    state.settings.useOvertime = t.checked;
+  } else if (t.id === 'genderPriority') {
+    state.settings.genderPriority = t.value;
+  } else if (t.id === 'importFile') {
+    const file = t.files[0];
+    if (!file) return;
+    file.text().then(txt => {
+      try {
+        const data = JSON.parse(txt);
+        if (!Array.isArray(data.carers) || !Array.isArray(data.runs)) throw new Error('Not a CareSchedule backup');
+        if (!confirm('Replace all current data with this backup?')) return;
+        state = Object.assign(newState(), data);
+        save(); render(); alert('Backup imported.');
+      } catch (err) { alert('Could not import: ' + err.message); }
+    });
+    return;
+  } else {
+    return;
+  }
+  save(); render();
+});
+
+render();
+</script>
+</body>
+</html>
