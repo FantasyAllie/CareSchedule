@@ -728,7 +728,7 @@ function viewSchedule() {
         </div>`).join('');
       const shadow = (cell.shadow.c || cell.shadowOpen)
         ? `<div class="slot shadow">${carerSelect(run, d, cell.shadow.c, 'data-slot="shadow"', 'Shadow / training')}</div>`
-        : `<button class="linkbtn" data-action="shadow" data-run="${run.id}" data-day="${d}">+ 3rd carer (shadow)</button>`;
+        : `<button class="linkbtn" data-action="shadow" data-run="${run.id}" data-day="${d}">+ Shadow Carer</button>`;
       const issues = iss.map(i => `<div class="${i.level === 'error' ? 'e' : 'w'}">${esc(i.msg)}</div>`).join('');
       return `<td class="cell ${cls}">${slots}${shadow}<div class="issues">${issues}</div></td>`;
     }).join('');
