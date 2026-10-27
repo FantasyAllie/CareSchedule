@@ -30,6 +30,7 @@ function check(state) {
         seen.add(id);
         const c = byId[id];
         assert(r.gender === 'any' || r.gender === c.gender, `gender rule broken on ${r.id}`);
+        assert(!c.runTypes || c.runTypes === 'both' || c.runTypes === (r.type === 'double' ? 'double' : 'single'), `${id} on wrong run type ${r.id}`);
         assert(!(r.allowed && r.allowed.length) || r.allowed.includes(id), `${id} not allowed on ${r.id}`);
         assert(E.carerStatus(c, WEEK, d).ok, `${id} assigned while unavailable on day ${d}`);
       }
@@ -147,13 +148,27 @@ test('validation flags double booking and leave override', () => {
 // --- history-aware rules ---
 function seeded(seed) { return () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296); }
 
+test('carers set to double-ups only or singles only stay on those runs', () => {
+  const s = E.newState();
+  s.carers = [carer('DO', 'F', true, 7, { runTypes: 'double' }), carer('SO', 'F', true, 7, { runTypes: 'single' }),
+    carer('B1', 'F', true, 7), carer('B2', 'F', false, 7)];
+  s.runs = [run('D', 'double'), run('S', 'single')];
+  for (let i = 0; i < 10; i++) {
+    const r = E.autoFill(s, WEEK, { random: seeded(i) });
+    check(s);
+    assert.strictEqual(r.issues.list.filter(x => x.level === 'error').length, 0);
+  }
+  E.getCell(E.getWeek(s, WEEK), s.runs[1], 0).slots[0] = { c: 'DO', locked: true, override: false };
+  assert(E.validate(s, WEEK).list.some(i => i.level === 'error' && /double-ups only/.test(i.msg)));
+});
+
 function rosterState() {
   const s = E.newState();
   s.carers = [
     carer('M1', 'M', true, 5), carer('M2', 'M', true, 4, { overtime: true }), carer('M3', 'M', false, 5),
     carer('M4', 'M', true, 3), carer('F1', 'F', true, 5), carer('F2', 'F', false, 5), carer('F3', 'F', true, 4),
-    carer('F4', 'F', false, 4), carer('F5', 'F', true, 5), carer('F6', 'F', false, 3), carer('F7', 'F', true, 5),
-    carer('F8', 'F', false, 5), carer('F9', 'F', true, 4), carer('F10', 'F', true, 5), carer('F11', 'F', false, 4),
+    carer('F4', 'F', false, 4), carer('F5', 'F', true, 5), carer('F6', 'F', false, 3, { runTypes: 'double' }), carer('F7', 'F', true, 5),
+    carer('F8', 'F', false, 5), carer('F9', 'F', true, 4, { runTypes: 'single' }), carer('F10', 'F', true, 5), carer('F11', 'F', false, 4),
   ];
   s.runs = [run('R1', 'double'), run('R2', 'double', 'F'), run('R3', 'double'), run('R4', 'single'), run('R5', 'single', 'F')];
   return s;
@@ -211,7 +226,7 @@ function rosterState() {
     carer('M1', 'M', true, 5), carer('M2', 'M', true, 4, { overtime: true }), carer('M3', 'M', false, 5),
     carer('M4', 'M', true, 3), carer('M5', 'M', true, 5), carer('F1', 'F', true, 5), carer('F2', 'F', false, 5),
     carer('F3', 'F', true, 4), carer('F4', 'F', false, 4), carer('F5', 'F', true, 5),
-    carer('F6', 'F', false, 3), carer('F7', 'F', true, 5), carer('F8', 'F', false, 5), carer('F9', 'F', true, 4),
+    carer('F6', 'F', false, 3, { runTypes: 'double' }), carer('F7', 'F', true, 5), carer('F8', 'F', false, 5), carer('F9', 'F', true, 4, { runTypes: 'single' }),
     carer('F10', 'F', true, 5), carer('F11', 'F', false, 4), carer('F12', 'F', false, 5),
   ];
   s.runs = [run('R1', 'double'), run('R2', 'double', 'F'), run('R3', 'double'), run('R4', 'single'), run('R5', 'single', 'F'),

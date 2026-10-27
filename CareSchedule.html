@@ -140,6 +140,16 @@ function carerStatus(carer, weekStart, d) {
 
 function genderOk(run, carer) { return run.gender === 'any' || run.gender === carer.gender; }
 
+// carer.runTypes: 'both' (default), 'double' (double-ups only) or 'single' (singles only)
+function runTypeOk(run, carer) {
+  const t = carer.runTypes || 'both';
+  return t === 'both' || t === (run.type === 'double' ? 'double' : 'single');
+}
+function runTypesLabel(carer) {
+  const t = carer.runTypes || 'both';
+  return t === 'double' ? 'Double-ups only' : t === 'single' ? 'Singles only' : 'Doubles & singles';
+}
+
 function capacity(carer, withOvertime) {
   return Math.min(7, Number(carer.daysPerWeek || 0) + (withOvertime && carer.overtime ? 1 : 0));
 }
@@ -337,7 +347,7 @@ function autoFill(state, weekStart, opts) {
 
   function pick(run, d, cell, idx, rule, cap, passNo) {
     const cands = carers.filter(c =>
-      genderOk(run, c) && allowedOk(run, c) && ok(c, d) && !booked[d].has(c.id) &&
+      genderOk(run, c) && runTypeOk(run, c) && allowedOk(run, c) && ok(c, d) && !booked[d].has(c.id) &&
       !weekendBlocked(c, d) &&
       !(reserved.has(c.id) && !isSpecific(run) && (passNo === 1 || d >= 5)) &&
       worked[c.id].size < cap(c) &&
@@ -476,6 +486,7 @@ function validate(state, weekStart) {
         const c = byId[s.c];
         if (!c) { add(run.id, d, 'error', 'Unknown carer'); continue; }
         if (!genderOk(run, c)) add(run.id, d, 'error', `${c.name}${role}: run is ${run.gender === 'M' ? 'male' : 'female'} only`);
+        if (!role && !runTypeOk(run, c)) add(run.id, d, s.override ? 'warn' : 'error', `${c.name}: ${runTypesLabel(c).toLowerCase()}${s.override ? ' (overridden)' : ''}`);
         if (!role && !allowedOk(run, c)) add(run.id, d, s.override ? 'warn' : 'error', `${c.name}: not on this run's carer list${s.override ? ' (overridden)' : ''}`);
         const st = carerStatus(c, weekStart, d);
         if (!st.ok) add(run.id, d, s.override ? 'warn' : 'error', `${c.name}${role}: ${st.label}${s.override ? ' (overridden)' : ''}`);
@@ -644,6 +655,7 @@ function carerSelect(run, d, selected, attrs, placeholder) {
     if (!st.ok) notes.push(st.code === 'AL' ? 'AL' : st.code === 'SICK' ? 'Sick' : 'N/A');
     if (!genderOk(run, c)) notes.push('gender');
     if (!allowedOk(run, c)) notes.push('not on run list');
+    if (!runTypeOk(run, c)) notes.push(c.runTypes === 'double' ? 'doubles only' : 'singles only');
     if (bookedElsewhere.has(c.id)) notes.push('booked');
     const label = `${c.name} (${c.gender}${c.driver ? ', D' : ''})${notes.length ? ' – ' + notes.join(', ') : ''}`;
     return `<option value="${c.id}" ${c.id === selected ? 'selected' : ''}>${esc(label)}</option>`;
@@ -682,6 +694,10 @@ function assign(runId, d, slot, carerId) {
     override = true;
   }
   if (!genderOk(run, c) && !confirm(`${run.name} is ${genderLabel(run.gender).toLowerCase()}. Assign ${c.name} anyway?`)) return false;
+  if (slot !== 'shadow' && !runTypeOk(run, c)) {
+    if (!confirm(`${c.name} is set to ${runTypesLabel(c).toLowerCase()}. Assign them to ${run.name} anyway?`)) return false;
+    override = true;
+  }
   if (slot !== 'shadow' && !allowedOk(run, c)) {
     if (!confirm(`${c.name} is not one of ${run.name}'s named carers. Assign them anyway?`)) return false;
     override = true;
@@ -728,7 +744,7 @@ function download(filename, text, type) {
 
 // ---------- Carers ----------
 function blankCarer() {
-  return { id: uid(), name: '', gender: 'F', driver: false, daysPerWeek: 5, overtime: false, available: DAYS.map(() => true), leave: [], notes: '', active: true };
+  return { id: uid(), name: '', gender: 'F', driver: false, daysPerWeek: 5, overtime: false, runTypes: 'both', available: DAYS.map(() => true), leave: [], notes: '', active: true };
 }
 
 function viewCarers() {
@@ -741,6 +757,7 @@ function viewCarers() {
       <td><span class="tag ${c.gender}">${c.gender === 'M' ? 'Male' : 'Female'}</span></td>
       <td><span class="tag ${c.driver ? 'drv' : 'nodrv'}">${c.driver ? 'Driver' : 'Non-driver'}</span></td>
       <td>${c.daysPerWeek}${c.overtime ? ' + 1 overtime' : ''}</td>
+      <td>${runTypesLabel(c)}</td>
       <td>${DAYS.filter((_, i) => c.available[i]).join(', ') || 'none'}</td>
       <td>${current || '<span class="muted">none</span>'}</td>
       <td>${weekendBadge(weekendStreak(hist[c.id]))}</td>
@@ -752,8 +769,8 @@ function viewCarers() {
   <div class="panel">
     <div class="toolbar"><h3 style="margin:0;flex:1">Carers (${state.carers.length})</h3>
       <button class="btn primary" data-action="newCarer">+ Add carer</button></div>
-    <table><thead><tr><th>Name</th><th>Gender</th><th>Driver</th><th>Days / week</th><th>Can work</th><th>Upcoming leave / sickness</th><th>Weekends (w/c ${fmtDate(ui.week)})</th><th></th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="8" class="muted">No carers yet.</td></tr>'}</tbody></table>
+    <table><thead><tr><th>Name</th><th>Gender</th><th>Driver</th><th>Days / week</th><th>Run types</th><th>Can work</th><th>Upcoming leave / sickness</th><th>Weekends (w/c ${fmtDate(ui.week)})</th><th></th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="9" class="muted">No carers yet.</td></tr>'}</tbody></table>
   </div>`;
 }
 
@@ -774,6 +791,10 @@ function carerForm(c) {
       <label><input type="checkbox" data-f="driver" ${c.driver ? 'checked' : ''}> Driver</label>
       <label>Days per week <input type="number" min="0" max="7" data-f="daysPerWeek" value="${c.daysPerWeek}" style="width:60px"></label>
       <label><input type="checkbox" data-f="overtime" ${c.overtime ? 'checked' : ''}> Agreed +1 overtime day</label>
+      <label>Can go on <select data-f="runTypes">
+        <option value="both" ${!c.runTypes || c.runTypes === 'both' ? 'selected' : ''}>Double-ups and singles</option>
+        <option value="double" ${c.runTypes === 'double' ? 'selected' : ''}>Double-ups only</option>
+        <option value="single" ${c.runTypes === 'single' ? 'selected' : ''}>Singles only</option></select></label>
       <label><input type="checkbox" data-f="active" ${c.active !== false ? 'checked' : ''}> Active</label>
     </div>
     <div class="row days"><b>Days they can work:</b> ${DAYS.map((d, i) => `<label><input type="checkbox" data-f="avail" data-i="${i}" ${c.available[i] ? 'checked' : ''}>${d}</label>`).join('')}</div>
@@ -798,6 +819,7 @@ function readCarerForm() {
   c.driver = val('driver').checked;
   c.daysPerWeek = Math.max(0, Math.min(7, Number(val('daysPerWeek').value) || 0));
   c.overtime = val('overtime').checked;
+  c.runTypes = val('runTypes').value;
   c.active = val('active').checked;
   c.notes = val('notes').value;
   c.available = DAYS.map((_, i) => f.querySelector(`[data-f="avail"][data-i="${i}"]`).checked);
@@ -858,7 +880,8 @@ function viewSettings() {
     <p class="muted">Saturday and Sunday are planned first, then Monday to Friday. Order used each day: (0) runs limited to named carers,
       (1) a driver on every double-up, (2) second carer on double-ups (pass 1 uses non-drivers only, saving drivers),
       (3) a driver on every single run. Male-only / female-only runs are filled before mixed runs. Nobody is booked twice on the same day,
-      nobody goes over their days per week, and anyone on leave, sick or not available that day is skipped.</p>
+      nobody goes over their days per week, carers set to double-ups only or singles only are kept to those runs,
+      and anyone on leave, sick or not available that day is skipped.</p>
     <p class="muted">Auto-fill looks back over the previous ${HISTORY_WEEKS} weeks (about 3 months) of schedules in this app.
       Anyone who worked last weekend is steered away from this one, so most people get a weekend off every 2 weeks; anyone who has worked
       the last 2 weekends is automatically flagged ⚑ Weekend off priority and kept off this one, so nobody goes past 3 weeks.
@@ -886,7 +909,7 @@ function sampleData() {
     mk('Adam Brown', 'M', true, 5), mk('Ben Clarke', 'M', true, 4, { overtime: true }), mk('Chris Doyle', 'M', false, 5),
     mk('Dan Evans', 'M', true, 3, { available: [true, true, true, true, true, false, false] }),
     mk('Amy Hughes', 'F', true, 5), mk('Beth Jones', 'F', false, 5), mk('Cara King', 'F', true, 4, { overtime: true }),
-    mk('Dawn Lewis', 'F', false, 4), mk('Emma Moore', 'F', true, 5), mk('Faye Norris', 'F', false, 3),
+    mk('Dawn Lewis', 'F', false, 4), mk('Emma Moore', 'F', true, 5), mk('Faye Norris', 'F', false, 3, { runTypes: 'double' }),
     mk('Gina Owen', 'F', true, 5, { leave: [{ type: 'AL', from: addDays(ui.week, 2), to: addDays(ui.week, 4) }] }),
     mk('Hana Price', 'F', false, 5), mk('Isla Reed', 'F', true, 4), mk('Jade Shaw', 'F', false, 5),
     mk('Kyle Turner', 'M', true, 5), mk('Lucy Vance', 'F', false, 4), mk('Mia Walsh', 'F', true, 5),
