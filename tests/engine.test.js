@@ -31,6 +31,7 @@ function check(state) {
         const c = byId[id];
         assert(r.gender === 'any' || r.gender === c.gender, `gender rule broken on ${r.id}`);
         assert(!c.runTypes || c.runTypes === 'both' || c.runTypes === (r.type === 'double' ? 'double' : 'single'), `${id} on wrong run type ${r.id}`);
+        for (const other of ids) if (other !== id) assert(!E.cantPair(c, byId[other]), `${id} and ${other} on ${r.id} together`);
         assert(!(r.allowed && r.allowed.length) || r.allowed.includes(id), `${id} not allowed on ${r.id}`);
         assert(E.carerStatus(c, WEEK, d).ok, `${id} assigned while unavailable on day ${d}`);
       }
@@ -48,7 +49,7 @@ function test(name, fn) { fn(); passed++; console.log('ok -', name); }
 test('fills a fully staffed week with no rule breaks', () => {
   const s = E.newState();
   s.carers = [
-    carer('M1', 'M', true, 5), carer('M2', 'M', true, 5), carer('M3', 'M', false, 5),
+    carer('M1', 'M', true, 5, { notWith: ['F1'] }), carer('M2', 'M', true, 5), carer('M3', 'M', false, 5),
     carer('F1', 'F', true, 5), carer('F2', 'F', true, 5), carer('F3', 'F', false, 5), carer('F4', 'F', false, 5),
     carer('F5', 'F', true, 5), carer('F6', 'F', false, 5), carer('F7', 'F', true, 5),
   ];
@@ -208,6 +209,25 @@ test('after 6+ days in a row a carer gets 2 days off in a row', () => {
   }
   E.getCell(E.getWeek(s2, next), s2.runs[0], 0).slots[0] = { c: 'A', locked: true, override: false };
   assert(E.validate(s2, next).list.some(i => i.level === 'error' && /A: back on Mon after 6 days in a row/.test(i.msg)));
+});
+
+test('carers who must not work together are never put on the same run', () => {
+  const s = E.newState();
+  // H and W are married: only H has W listed – it must still apply both ways
+  s.carers = [carer('H', 'M', true, 5, { notWith: ['W'] }), carer('W', 'F', false, 5),
+    carer('D1', 'F', true, 5), carer('N1', 'F', false, 5), carer('D2', 'M', true, 5), carer('D3', 'F', true, 5)];
+  s.runs = [run('R1', 'double'), run('R2', 'double')];
+  for (let i = 0; i < 20; i++) {
+    const r = E.autoFill(s, WEEK, { random: seeded(i) });
+    check(s);
+    assert(!r.issues.list.some(x => /needed/.test(x.msg)), 'runs left short');
+  }
+  const cell = E.getCell(E.getWeek(s, WEEK), s.runs[0], 0);
+  cell.slots[0] = { c: 'H', locked: true, override: false };
+  cell.slots[1] = { c: 'W', locked: true, override: false };
+  assert(E.validate(s, WEEK).list.some(i => i.level === 'error' && /H and W can't work together/.test(i.msg)));
+  cell.shadow = { c: 'W', override: true }; cell.slots[1] = { c: 'N1', locked: true, override: false };
+  assert(E.validate(s, WEEK).list.some(i => i.level === 'warn' && /H and W can't work together \(overridden\)/.test(i.msg)));
 });
 
 function placementsOf(s, weeks) {

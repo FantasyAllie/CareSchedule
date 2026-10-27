@@ -145,6 +145,11 @@ function runTypeOk(run, carer) {
   const t = carer.runTypes || 'both';
   return t === 'both' || t === (run.type === 'double' ? 'double' : 'single');
 }
+// carer.notWith: ids of carers they must not be put on the same run with on the same day (either side counts)
+function cantPair(a, b) {
+  return a.id !== b.id && ((a.notWith || []).includes(b.id) || (b.notWith || []).includes(a.id));
+}
+
 function runTypesLabel(carer) {
   const t = carer.runTypes || 'both';
   return t === 'double' ? 'Double-ups only' : t === 'single' ? 'Singles only' : 'Doubles & singles';
@@ -410,14 +415,16 @@ function autoFill(state, weekStart, opts) {
     .some(b => b.back === d || (b.end - b.length < d && d <= b.end));
 
   // every hard rule except the days-in-a-row limit and days per week, which callers check
-  const allowedHere = (c, run, d, rule, passNo) =>
-    genderOk(run, c) && runTypeOk(run, c) && allowedOk(run, c) && ok(c, d) && !booked[d].has(c.id) &&
+  const carerById = Object.fromEntries(state.carers.map(c => [c.id, c]));
+  const clashes = (c, cell) => cellCarers(cell).some(id => carerById[id] && cantPair(c, carerById[id]));
+  const allowedHere = (c, run, d, rule, passNo, cell) =>
+    !clashes(c, cell) && genderOk(run, c) && runTypeOk(run, c) && allowedOk(run, c) && ok(c, d) && !booked[d].has(c.id) &&
     !weekendBlocked(c, d) &&
     !(reserved.has(c.id) && !isSpecific(run) && (passNo === 1 || d >= 5)) &&
     (!rule.needDriver || c.driver) &&
     (!rule.nonDriverOnly || !c.driver);
-  const eligible = (c, run, d, rule, cap, passNo) =>
-    allowedHere(c, run, d, rule, passNo) && !tooManyInARow(c, d) && !breaksRest(c, d) && worked[c.id].size < cap(c);
+  const eligible = (c, run, d, rule, cap, passNo, cell) =>
+    allowedHere(c, run, d, rule, passNo, cell) && !tooManyInARow(c, d) && !breaksRest(c, d) && worked[c.id].size < cap(c);
 
   const place = (c, run, d, cell, idx) => {
     cell.slots[idx].c = c.id;
@@ -436,7 +443,7 @@ function autoFill(state, weekStart, opts) {
   };
 
   function pick(run, d, cell, idx, rule, cap, passNo) {
-    const cands = carers.filter(c => eligible(c, run, d, rule, cap, passNo));
+    const cands = carers.filter(c => eligible(c, run, d, rule, cap, passNo, cell));
     if (!cands.length) return false;
     const score = c => {
       const left = cap(c) - worked[c.id].size;
@@ -475,7 +482,7 @@ function autoFill(state, weekStart, opts) {
   // stretch to someone else, then put c in the gap.
   function swapIntoGap(run, d, cell, idx, cap) {
     const rule = { needDriver: needsDriver(run) && !hasDriver(cell) };
-    const blocked = shuffle(carers.filter(c => tooManyInARow(c, d) && allowedHere(c, run, d, rule, 2) &&
+    const blocked = shuffle(carers.filter(c => tooManyInARow(c, d) && allowedHere(c, run, d, rule, 2, cell) &&
       worked[c.id].size <= cap(c)), rng);
     for (const c of blocked) {
       for (const e of shuffle([...worked[c.id]], rng)) {
@@ -486,7 +493,7 @@ function autoFill(state, weekStart, opts) {
         unplace(c, spot.r, e, spot.cell, spot.i);
         if (!tooManyInARow(c, d) && !breaksRest(c, d) && worked[c.id].size < cap(c)) {
           const ruleE = { needDriver: needsDriver(spot.r) && !hasDriver(spot.cell) };
-          const y = shuffle(carers.filter(y => y !== c && eligible(y, spot.r, e, ruleE, cap, 2)), rng)[0];
+          const y = shuffle(carers.filter(y => y !== c && eligible(y, spot.r, e, ruleE, cap, 2, spot.cell)), rng)[0];
           if (y) {
             place(y, spot.r, e, spot.cell, spot.i);
             place(c, run, d, cell, idx);
@@ -605,6 +612,13 @@ function validate(state, weekStart) {
       if (missing) add(run.id, d, 'error', `${missing} carer(s) needed`);
       if (needsDriver(run) && assigned.length && !assigned.some(s => byId[s.c] && byId[s.c].driver)) add(run.id, d, 'error', 'No driver');
       const people = cell.slots.map(s => ({ s, role: '' })).concat(cell.shadow && cell.shadow.c ? [{ s: cell.shadow, role: ' (shadow)' }] : []);
+      people.forEach(({ s }, i) => people.slice(i + 1).forEach(({ s: t }) => {
+        const a = byId[s.c], b = byId[t.c];
+        if (a && b && cantPair(a, b)) {
+          const over = s.override || t.override;
+          add(run.id, d, over ? 'warn' : 'error', `${a.name} and ${b.name} can't work together${over ? ' (overridden)' : ''}`);
+        }
+      }));
       for (const { s, role } of people) {
         if (!s.c) continue;
         const c = byId[s.c];
@@ -653,7 +667,7 @@ function validate(state, weekStart) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { DAYS, HISTORY_WEEKS, weekDays, longestStretch, restBreaches, ROTATION_WEEKS, history, weekendStreak, rotation, uid, addDays, mondayOf, newState, getWeek, getCell, carerStatus, capacity, autoFill, validate, clearUnlocked };
+  module.exports = { cantPair, DAYS, HISTORY_WEEKS, weekDays, longestStretch, restBreaches, ROTATION_WEEKS, history, weekendStreak, rotation, uid, addDays, mondayOf, newState, getWeek, getCell, carerStatus, capacity, autoFill, validate, clearUnlocked };
 }
 // ===== ENGINE END =====
 </script>
@@ -788,8 +802,11 @@ function carerSelect(run, d, selected, attrs, placeholder) {
   const week = getWeek(state, ui.week);
   const bookedElsewhere = new Set();
   for (const r of state.runs) if (r.id !== run.id && r.days[d]) cellIds(getCell(week, r, d)).forEach(id => bookedElsewhere.add(id));
+  const here = cellIds(getCell(week, run, d)).map(byId).filter(Boolean);
   const opts = sortedCarers().filter(c => c.active !== false || c.id === selected).map(c => {
     const notes = [];
+    const clash = here.find(o => cantPair(c, o));
+    if (clash) notes.push(`not with ${clash.name}`);
     const st = carerStatus(c, ui.week, d);
     if (!st.ok) notes.push(st.code === 'AL' ? 'AL' : st.code === 'SICK' ? 'Sick' : 'N/A');
     if (!genderOk(run, c)) notes.push('gender');
@@ -833,6 +850,12 @@ function assign(runId, d, slot, carerId) {
     override = true;
   }
   if (!genderOk(run, c) && !confirm(`${run.name} is ${genderLabel(run.gender).toLowerCase()}. Assign ${c.name} anyway?`)) return false;
+  const others = cellIds(cell).filter(id => id !== target.c).map(byId).filter(Boolean);
+  const clash = others.find(o => cantPair(c, o));
+  if (clash) {
+    if (!confirm(`${c.name} and ${clash.name} are set to not work together. Put them on ${run.name} together anyway?`)) return false;
+    override = true;
+  }
   if (slot !== 'shadow' && !runTypeOk(run, c)) {
     if (!confirm(`${c.name} is set to ${runTypesLabel(c).toLowerCase()}. Assign them to ${run.name} anyway?`)) return false;
     override = true;
@@ -892,7 +915,8 @@ function viewCarers() {
     const today = todayIso();
     const current = (c.leave || []).filter(l => (l.to || l.from) >= today).map(l => `${l.type === 'AL' ? 'AL' : 'Sick'} ${fmtDate(l.from)}${l.to && l.to !== l.from ? '–' + fmtDate(l.to) : ''}`).join('<br>');
     return `<tr class="${c.active === false ? 'muted' : ''}">
-      <td>${esc(c.name)}${c.active === false ? ' (inactive)' : ''}${weekendStreak(hist[c.id]) >= 2 ? ' <span class="tag flag">⚑ Weekend off priority</span>' : ''}</td>
+      <td>${esc(c.name)}${c.active === false ? ' (inactive)' : ''}${weekendStreak(hist[c.id]) >= 2 ? ' <span class="tag flag">⚑ Weekend off priority</span>' : ''}
+        ${notWithNames(c) ? `<br><span class="muted">Not with: ${esc(notWithNames(c))}</span>` : ''}</td>
       <td><span class="tag ${c.gender}">${c.gender === 'M' ? 'Male' : 'Female'}</span></td>
       <td><span class="tag ${c.driver ? 'drv' : 'nodrv'}">${c.driver ? 'Driver' : 'Non-driver'}</span></td>
       <td>${c.daysPerWeek}${c.overtime ? ' + 1 overtime' : ''}</td>
@@ -911,6 +935,11 @@ function viewCarers() {
     <table><thead><tr><th>Name</th><th>Gender</th><th>Driver</th><th>Days / week</th><th>Run types</th><th>Can work</th><th>Upcoming leave / sickness</th><th>Weekends (w/c ${fmtDate(ui.week)})</th><th></th></tr></thead>
     <tbody>${rows || '<tr><td colspan="9" class="muted">No carers yet.</td></tr>'}</tbody></table>
   </div>`;
+}
+
+// names of everyone this carer can't work with (set on either carer)
+function notWithNames(c) {
+  return sortedCarers().filter(o => cantPair(c, o)).map(o => o.name).join(', ');
 }
 
 function carerForm(c) {
@@ -937,6 +966,11 @@ function carerForm(c) {
       <label><input type="checkbox" data-f="active" ${c.active !== false ? 'checked' : ''}> Active</label>
     </div>
     <div class="row days"><b>Days they can work:</b> ${DAYS.map((d, i) => `<label><input type="checkbox" data-f="avail" data-i="${i}" ${c.available[i] ? 'checked' : ''}>${d}</label>`).join('')}</div>
+    <div class="row" style="align-items:flex-start"><b>Can't work with:</b>
+      <details><summary>${esc(sortedCarers().filter(o => o.id !== c.id && (c.notWith || []).includes(o.id)).map(o => o.name).join(', ') || 'No one – choose…')}</summary>
+        ${sortedCarers().filter(o => o.id !== c.id).map(o => `<label style="display:block"><input type="checkbox" data-f="notWith" data-c="${o.id}" ${(c.notWith || []).includes(o.id) ? 'checked' : ''}> ${esc(o.name)}</label>`).join('')}
+      </details>
+      <span class="muted">never put on the same run on the same day (applies both ways)</span></div>
     <div class="row"><label>Notes <input data-f="notes" value="${esc(c.notes || '')}" size="60"></label></div>
     <div><b>Annual leave / sickness</b> <span class="muted">– auto-fill will not use them on these dates (you can still assign manually with an override)</span></div>
     ${leave}
@@ -961,6 +995,7 @@ function readCarerForm() {
   c.runTypes = val('runTypes').value;
   c.active = val('active').checked;
   c.notes = val('notes').value;
+  c.notWith = [...f.querySelectorAll('[data-f="notWith"]:checked')].map(x => x.dataset.c);
   c.available = DAYS.map((_, i) => f.querySelector(`[data-f="avail"][data-i="${i}"]`).checked);
   c.leave = [...f.querySelectorAll('[data-leave]')].map(row => {
     const from = row.querySelector('[data-f="lfrom"]').value;
@@ -1057,6 +1092,8 @@ function sampleData() {
     mk('Hana Price', 'F', false, 5), mk('Isla Reed', 'F', true, 4), mk('Jade Shaw', 'F', false, 5),
     mk('Kyle Turner', 'M', true, 5), mk('Lucy Vance', 'F', false, 4), mk('Mia Walsh', 'F', true, 5),
   ];
+  const pair = ['Amy Hughes', 'Ben Clarke'].map(n => s.carers.find(c => c.name === n));
+  pair[0].notWith = [pair[1].id]; pair[1].notWith = [pair[0].id];
   const named = ['Beth Jones', 'Hana Price', 'Jade Shaw'].map(n => s.carers.find(c => c.name === n).id);
   s.runs = [
     { id: uid(), name: 'Run 1', type: 'double', gender: 'any', days: all.slice() },
@@ -1116,6 +1153,12 @@ document.getElementById('app').addEventListener('click', e => {
       if (!ui.editCarer.name) { alert('Please enter a name.'); return; }
       const i = state.carers.findIndex(c => c.id === ui.editCarer.id);
       if (i >= 0) state.carers[i] = ui.editCarer; else state.carers.push(ui.editCarer);
+      for (const o of state.carers) { // "can't work with" applies both ways, so keep the other carers' lists in step
+        if (o.id === ui.editCarer.id) continue;
+        const set = new Set(o.notWith || []);
+        if (ui.editCarer.notWith.includes(o.id)) set.add(ui.editCarer.id); else set.delete(ui.editCarer.id);
+        o.notWith = [...set];
+      }
       ui.editCarer = null; break;
     }
     case 'delCarer': {
@@ -1123,6 +1166,7 @@ document.getElementById('app').addEventListener('click', e => {
       if (!confirm(`Remove ${c.name}? They will be taken off all schedules. (Tip: untick "Active" instead to keep their history.)`)) return;
       state.carers = state.carers.filter(x => x.id !== c.id);
       for (const r of state.runs) if (r.allowed) r.allowed = r.allowed.filter(id => id !== c.id);
+      for (const o of state.carers) if (o.notWith) o.notWith = o.notWith.filter(id => id !== c.id);
       for (const w of Object.values(state.weeks)) for (const byDay of Object.values(w.cells)) for (const cell of Object.values(byDay)) {
         for (const s of cell.slots) if (s.c === c.id) { s.c = null; s.locked = false; }
         if (cell.shadow && cell.shadow.c === c.id) cell.shadow.c = null;
