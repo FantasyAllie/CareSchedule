@@ -103,7 +103,7 @@ function newState() {
     carers: [],
     runs: [],
     weeks: {},
-    settings: { genderPriority: 'M', secondPass: true, useOvertime: true, weekendRule: true },
+    settings: { genderPriority: 'M', secondPass: true, useOvertime: true, weekendRule: true, maxInARow: 5 },
   };
 }
 
@@ -145,6 +145,11 @@ function runTypeOk(run, carer) {
   const t = carer.runTypes || 'both';
   return t === 'both' || t === (run.type === 'double' ? 'double' : 'single');
 }
+// carer.notWith: ids of carers they must not be put on the same run with on the same day (either side counts)
+function cantPair(a, b) {
+  return a.id !== b.id && ((a.notWith || []).includes(b.id) || (b.notWith || []).includes(a.id));
+}
+
 function runTypesLabel(carer) {
   const t = carer.runTypes || 'both';
   return t === 'double' ? 'Double-ups only' : t === 'single' ? 'Singles only' : 'Doubles & singles';
@@ -215,6 +220,54 @@ function history(state, weekStart, weeks) {
     }
   }
   return h;
+}
+
+// days[i] = whether each carer works day i of the week starting weekStart (empty if no schedule that week)
+function weekDays(state, weekStart) {
+  const week = state.weeks[weekStart];
+  const out = {};
+  for (const c of state.carers) out[c.id] = DAYS.map(() => false);
+  if (!week) return out;
+  for (const run of state.runs) {
+    for (let d = 0; d < 7; d++) {
+      const cell = run.days[d] && week.cells[run.id] && week.cells[run.id][d];
+      if (cell) for (const id of cellCarers(cell)) if (out[id]) out[id][d] = true;
+    }
+  }
+  return out;
+}
+
+// Longest run of consecutive working days that touches this week, looking back into history and
+// forward into next week if it has already been scheduled. working(d) covers d from -7*HISTORY_WEEKS to 13.
+function longestStretch(working) {
+  let best = 0, cur = 0;
+  for (let d = -7 * HISTORY_WEEKS; d <= 13; d++) {
+    cur = working(d) ? cur + 1 : 0;
+    if (cur && d >= 0 && d <= 6) best = Math.max(best, cur);
+    if (cur && d > 6 && cur > d - 6) best = Math.max(best, cur); // stretch that started this week
+  }
+  return best;
+}
+
+const LONG_STRETCH = 6; // after this many working days in a row...
+const REST_DAYS = 2;    // ...the carer must have this many days off in a row
+
+// Places where a carer goes back to work too soon after a long stretch: a stretch of LONG_STRETCH+ working days
+// followed by work again within REST_DAYS. Scans days `from`..`to` using working(d); returns
+// [{ end, length, back }] where `back` is the day they are working again.
+function restBreaches(working, from, to) {
+  const out = [];
+  let len = 0;
+  for (let d = from; d <= to; d++) {
+    if (working(d)) { len++; continue; }
+    if (len >= LONG_STRETCH) {
+      for (let k = 0; k < REST_DAYS; k++) {
+        if (d + k <= to && working(d + k)) { out.push({ end: d - 1, length: len, back: d + k }); break; }
+      }
+    }
+    len = 0;
+  }
+  return out;
 }
 
 // Number of weekends in a row worked, counting back from last week.
@@ -344,15 +397,53 @@ function autoFill(state, weekStart, opts) {
   const genderRank = c => opts.genderPriority === 'none' ? 0 : (c.gender === opts.genderPriority ? 0 : 1);
   // anyone who has worked the last 2 weekends gets this one off – never 3 weekends in a row
   const weekendBlocked = (c, d) => d >= 5 && opts.weekendRule !== false && streak[c.id] >= 2;
+  // never more than maxInARow working days in a row, counting last week's days and next week's (if scheduled)
+  const nextWeek = weekDays(state, addDays(weekStart, 7));
+  const isWorking = (c, d) => d < 0 ? !!hist[c.id].days[hist[c.id].days.length + d]
+    : d > 6 ? nextWeek[c.id][d - 7] : booked[d].has(c.id);
+  const maxInARow = Number(opts.maxInARow) || 0;
+  // length of the working stretch the carer would be on if they also worked day d
+  const stretchWith = (c, d) => {
+    let n = 1;
+    for (let e = d - 1; isWorking(c, e) && n <= 14; e--) n++;
+    for (let e = d + 1; e <= 13 && isWorking(c, e) && n <= 14; e++) n++;
+    return n;
+  };
+  const tooManyInARow = (c, d) => maxInARow > 0 && stretchWith(c, d) > maxInARow;
+  // working day d must not cut short the 2 days off owed after a 6+ day stretch (or create a stretch that does)
+  const breaksRest = (c, d) => restBreaches(e => e === d || isWorking(c, e), d - 3 * 7, 13)
+    .some(b => b.back === d || (b.end - b.length < d && d <= b.end));
+
+  // every hard rule except the days-in-a-row limit and days per week, which callers check
+  const carerById = Object.fromEntries(state.carers.map(c => [c.id, c]));
+  const clashes = (c, cell) => cellCarers(cell).some(id => carerById[id] && cantPair(c, carerById[id]));
+  const allowedHere = (c, run, d, rule, passNo, cell) =>
+    !clashes(c, cell) && genderOk(run, c) && runTypeOk(run, c) && allowedOk(run, c) && ok(c, d) && !booked[d].has(c.id) &&
+    !weekendBlocked(c, d) &&
+    !(reserved.has(c.id) && !isSpecific(run) && (passNo === 1 || d >= 5)) &&
+    (!rule.needDriver || c.driver) &&
+    (!rule.nonDriverOnly || !c.driver);
+  const eligible = (c, run, d, rule, cap, passNo, cell) =>
+    allowedHere(c, run, d, rule, passNo, cell) && !tooManyInARow(c, d) && !breaksRest(c, d) && worked[c.id].size < cap(c);
+
+  const place = (c, run, d, cell, idx) => {
+    cell.slots[idx].c = c.id;
+    booked[d].add(c.id);
+    worked[c.id].add(d);
+    runCount[c.id][run.id] = (runCount[c.id][run.id] || 0) + 1;
+    dayRun[c.id][d] = run.id;
+  };
+  const unplace = (c, run, d, cell, idx) => {
+    cell.slots[idx].c = null;
+    booked[d].delete(c.id);
+    worked[c.id].delete(d);
+    runCount[c.id][run.id]--;
+    if (!runCount[c.id][run.id]) delete runCount[c.id][run.id];
+    delete dayRun[c.id][d];
+  };
 
   function pick(run, d, cell, idx, rule, cap, passNo) {
-    const cands = carers.filter(c =>
-      genderOk(run, c) && runTypeOk(run, c) && allowedOk(run, c) && ok(c, d) && !booked[d].has(c.id) &&
-      !weekendBlocked(c, d) &&
-      !(reserved.has(c.id) && !isSpecific(run) && (passNo === 1 || d >= 5)) &&
-      worked[c.id].size < cap(c) &&
-      (!rule.needDriver || c.driver) &&
-      (!rule.nonDriverOnly || !c.driver));
+    const cands = carers.filter(c => eligible(c, run, d, rule, cap, passNo, cell));
     if (!cands.length) return false;
     const score = c => {
       const left = cap(c) - worked[c.id].size;
@@ -383,13 +474,51 @@ function autoFill(state, weekStart, opts) {
         (!rule.needDriver ? (a.driver - b.driver) : 0) ||  // keep drivers free where a driver isn't needed
         (sb.soft - sa.soft);                               // weighted preferences (see WEIGHTS)
     });
-    const c = cands[0];
-    cell.slots[idx].c = c.id;
-    booked[d].add(c.id);
-    worked[c.id].add(d);
-    runCount[c.id][run.id] = (runCount[c.id][run.id] || 0) + 1;
-    dayRun[c.id][d] = run.id;
+    place(cands[0], run, d, cell, idx);
     return true;
+  }
+
+  // Fill a gap that is only blocked by the days-in-a-row limit: hand one of carer c's other shifts in that
+  // stretch to someone else, then put c in the gap.
+  function swapIntoGap(run, d, cell, idx, cap) {
+    const rule = { needDriver: needsDriver(run) && !hasDriver(cell) };
+    const blocked = shuffle(carers.filter(c => tooManyInARow(c, d) && allowedHere(c, run, d, rule, 2, cell) &&
+      worked[c.id].size <= cap(c)), rng);
+    for (const c of blocked) {
+      for (const e of shuffle([...worked[c.id]], rng)) {
+        const spot = state.runs.filter(r => r.days[e]).map(r => ({ r, cell: getCell(week, r, e) }))
+          .map(x => Object.assign(x, { i: x.cell.slots.findIndex(sl => sl.c === c.id && !sl.locked) }))
+          .find(x => x.i >= 0);
+        if (!spot) continue;
+        unplace(c, spot.r, e, spot.cell, spot.i);
+        if (!tooManyInARow(c, d) && !breaksRest(c, d) && worked[c.id].size < cap(c)) {
+          const ruleE = { needDriver: needsDriver(spot.r) && !hasDriver(spot.cell) };
+          const y = shuffle(carers.filter(y => y !== c && eligible(y, spot.r, e, ruleE, cap, 2, spot.cell)), rng)[0];
+          if (y) {
+            place(y, spot.r, e, spot.cell, spot.i);
+            place(c, run, d, cell, idx);
+            return true;
+          }
+        }
+        place(c, spot.r, e, spot.cell, spot.i); // undo
+      }
+    }
+    return false;
+  }
+
+  function repairGaps() {
+    if (!maxInARow) return 0;
+    const cap = c => capacity(c, opts.secondPass && opts.useOvertime);
+    let fixed = 0;
+    for (const d of DAY_ORDER) {
+      for (const run of state.runs) {
+        if (!run.days[d]) continue;
+        const cell = getCell(week, run, d);
+        let i;
+        while ((i = emptyIdx(cell)) >= 0 && swapIntoGap(run, d, cell, i, cap)) fixed++;
+      }
+    }
+    return fixed;
   }
 
   const hasDriver = cell => cell.slots.some(s => {
@@ -445,6 +574,8 @@ function autoFill(state, weekStart, opts) {
     const f2 = runPass(2);
     log.push(`Pass 2: filled ${f2} more slot(s) using spare carers${opts.useOvertime ? ' and agreed overtime' : ''}.`);
   }
+  const f3 = repairGaps();
+  if (f3) log.push(`Swapped shifts to fill ${f3} more slot(s) without going over ${maxInARow} days in a row.`);
   return { log, issues: validate(state, weekStart) };
 }
 
@@ -481,6 +612,13 @@ function validate(state, weekStart) {
       if (missing) add(run.id, d, 'error', `${missing} carer(s) needed`);
       if (needsDriver(run) && assigned.length && !assigned.some(s => byId[s.c] && byId[s.c].driver)) add(run.id, d, 'error', 'No driver');
       const people = cell.slots.map(s => ({ s, role: '' })).concat(cell.shadow && cell.shadow.c ? [{ s: cell.shadow, role: ' (shadow)' }] : []);
+      people.forEach(({ s }, i) => people.slice(i + 1).forEach(({ s: t }) => {
+        const a = byId[s.c], b = byId[t.c];
+        if (a && b && cantPair(a, b)) {
+          const over = s.override || t.override;
+          add(run.id, d, over ? 'warn' : 'error', `${a.name} and ${b.name} can't work together${over ? ' (overridden)' : ''}`);
+        }
+      }));
       for (const { s, role } of people) {
         if (!s.c) continue;
         const c = byId[s.c];
@@ -496,6 +634,7 @@ function validate(state, weekStart) {
   }
 
   const hist = history(state, weekStart);
+  const nextWeek = weekDays(state, addDays(weekStart, 7));
   const carers = {};
   for (const c of state.carers) {
     const days = DAYS.map((_, d) => (placements[d][c.id] || []).length > 0);
@@ -507,6 +646,20 @@ function validate(state, weekStart) {
     if (state.settings.weekendRule !== false && (days[5] || days[6])) {
       if (ws >= 2) list.push({ level: 'error', msg: `${c.name}: would be a 3rd weekend in a row – needs this weekend off` });
     }
+    const maxInARow = Number(state.settings.maxInARow) || 0;
+    if (maxInARow && n) {
+      const next = nextWeek[c.id];
+      const stretch = longestStretch(d => d < 0 ? !!h.days[h.days.length + d] : d > 6 ? next[d - 7] : days[d]);
+      if (stretch > maxInARow) list.push({ level: 'error', msg: `${c.name}: ${stretch} days in a row (maximum ${maxInARow})` });
+    }
+    if (n) {
+      const next = nextWeek[c.id];
+      const working = d => d < 0 ? !!h.days[h.days.length + d] : d > 6 ? next[d - 7] : days[d];
+      for (const b of restBreaches(working, -7 * HISTORY_WEEKS, 13)) {
+        if (b.back < 0 || b.back > 6) continue; // reported in the week they go back to work
+        list.push({ level: 'error', msg: `${c.name}: back on ${DAYS[b.back]} after ${b.length} days in a row – needs ${REST_DAYS} days off in a row first` });
+      }
+    }
     if (n > capacity(c, true)) list.push({ level: 'error', msg: `${c.name}: ${n} days booked, maximum is ${capacity(c, true)}` });
     else if (n > capacity(c, false)) list.push({ level: 'warn', msg: `${c.name}: working an overtime day (${n} days)` });
   }
@@ -514,7 +667,7 @@ function validate(state, weekStart) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { DAYS, HISTORY_WEEKS, ROTATION_WEEKS, history, weekendStreak, rotation, uid, addDays, mondayOf, newState, getWeek, getCell, carerStatus, capacity, autoFill, validate, clearUnlocked };
+  module.exports = { cantPair, DAYS, HISTORY_WEEKS, weekDays, longestStretch, restBreaches, ROTATION_WEEKS, history, weekendStreak, rotation, uid, addDays, mondayOf, newState, getWeek, getCell, carerStatus, capacity, autoFill, validate, clearUnlocked };
 }
 // ===== ENGINE END =====
 </script>
@@ -649,8 +802,11 @@ function carerSelect(run, d, selected, attrs, placeholder) {
   const week = getWeek(state, ui.week);
   const bookedElsewhere = new Set();
   for (const r of state.runs) if (r.id !== run.id && r.days[d]) cellIds(getCell(week, r, d)).forEach(id => bookedElsewhere.add(id));
+  const here = cellIds(getCell(week, run, d)).map(byId).filter(Boolean);
   const opts = sortedCarers().filter(c => c.active !== false || c.id === selected).map(c => {
     const notes = [];
+    const clash = here.find(o => cantPair(c, o));
+    if (clash) notes.push(`not with ${clash.name}`);
     const st = carerStatus(c, ui.week, d);
     if (!st.ok) notes.push(st.code === 'AL' ? 'AL' : st.code === 'SICK' ? 'Sick' : 'N/A');
     if (!genderOk(run, c)) notes.push('gender');
@@ -694,6 +850,12 @@ function assign(runId, d, slot, carerId) {
     override = true;
   }
   if (!genderOk(run, c) && !confirm(`${run.name} is ${genderLabel(run.gender).toLowerCase()}. Assign ${c.name} anyway?`)) return false;
+  const others = cellIds(cell).filter(id => id !== target.c).map(byId).filter(Boolean);
+  const clash = others.find(o => cantPair(c, o));
+  if (clash) {
+    if (!confirm(`${c.name} and ${clash.name} are set to not work together. Put them on ${run.name} together anyway?`)) return false;
+    override = true;
+  }
   if (slot !== 'shadow' && !runTypeOk(run, c)) {
     if (!confirm(`${c.name} is set to ${runTypesLabel(c).toLowerCase()}. Assign them to ${run.name} anyway?`)) return false;
     override = true;
@@ -753,7 +915,8 @@ function viewCarers() {
     const today = todayIso();
     const current = (c.leave || []).filter(l => (l.to || l.from) >= today).map(l => `${l.type === 'AL' ? 'AL' : 'Sick'} ${fmtDate(l.from)}${l.to && l.to !== l.from ? '–' + fmtDate(l.to) : ''}`).join('<br>');
     return `<tr class="${c.active === false ? 'muted' : ''}">
-      <td>${esc(c.name)}${c.active === false ? ' (inactive)' : ''}${weekendStreak(hist[c.id]) >= 2 ? ' <span class="tag flag">⚑ Weekend off priority</span>' : ''}</td>
+      <td>${esc(c.name)}${c.active === false ? ' (inactive)' : ''}${weekendStreak(hist[c.id]) >= 2 ? ' <span class="tag flag">⚑ Weekend off priority</span>' : ''}
+        ${notWithNames(c) ? `<br><span class="muted">Not with: ${esc(notWithNames(c))}</span>` : ''}</td>
       <td><span class="tag ${c.gender}">${c.gender === 'M' ? 'Male' : 'Female'}</span></td>
       <td><span class="tag ${c.driver ? 'drv' : 'nodrv'}">${c.driver ? 'Driver' : 'Non-driver'}</span></td>
       <td>${c.daysPerWeek}${c.overtime ? ' + 1 overtime' : ''}</td>
@@ -772,6 +935,11 @@ function viewCarers() {
     <table><thead><tr><th>Name</th><th>Gender</th><th>Driver</th><th>Days / week</th><th>Run types</th><th>Can work</th><th>Upcoming leave / sickness</th><th>Weekends (w/c ${fmtDate(ui.week)})</th><th></th></tr></thead>
     <tbody>${rows || '<tr><td colspan="9" class="muted">No carers yet.</td></tr>'}</tbody></table>
   </div>`;
+}
+
+// names of everyone this carer can't work with (set on either carer)
+function notWithNames(c) {
+  return sortedCarers().filter(o => cantPair(c, o)).map(o => o.name).join(', ');
 }
 
 function carerForm(c) {
@@ -798,6 +966,11 @@ function carerForm(c) {
       <label><input type="checkbox" data-f="active" ${c.active !== false ? 'checked' : ''}> Active</label>
     </div>
     <div class="row days"><b>Days they can work:</b> ${DAYS.map((d, i) => `<label><input type="checkbox" data-f="avail" data-i="${i}" ${c.available[i] ? 'checked' : ''}>${d}</label>`).join('')}</div>
+    <div class="row" style="align-items:flex-start"><b>Can't work with:</b>
+      <details><summary>${esc(sortedCarers().filter(o => o.id !== c.id && (c.notWith || []).includes(o.id)).map(o => o.name).join(', ') || 'No one – choose…')}</summary>
+        ${sortedCarers().filter(o => o.id !== c.id).map(o => `<label style="display:block"><input type="checkbox" data-f="notWith" data-c="${o.id}" ${(c.notWith || []).includes(o.id) ? 'checked' : ''}> ${esc(o.name)}</label>`).join('')}
+      </details>
+      <span class="muted">never put on the same run on the same day (applies both ways)</span></div>
     <div class="row"><label>Notes <input data-f="notes" value="${esc(c.notes || '')}" size="60"></label></div>
     <div><b>Annual leave / sickness</b> <span class="muted">– auto-fill will not use them on these dates (you can still assign manually with an override)</span></div>
     ${leave}
@@ -822,6 +995,7 @@ function readCarerForm() {
   c.runTypes = val('runTypes').value;
   c.active = val('active').checked;
   c.notes = val('notes').value;
+  c.notWith = [...f.querySelectorAll('[data-f="notWith"]:checked')].map(x => x.dataset.c);
   c.available = DAYS.map((_, i) => f.querySelector(`[data-f="avail"][data-i="${i}"]`).checked);
   c.leave = [...f.querySelectorAll('[data-leave]')].map(row => {
     const from = row.querySelector('[data-f="lfrom"]').value;
@@ -876,6 +1050,10 @@ function viewSettings() {
         <option value="none" ${s.genderPriority === 'none' ? 'selected' : ''}>No preference</option></select></label></div>
     <div class="row"><label><input type="checkbox" id="secondPassSetting" ${s.secondPass ? 'checked' : ''}> Do a second pass to fill gaps with spare carers (incl. spare drivers)</label></div>
     <div class="row"><label><input type="checkbox" id="useOvertime" ${s.useOvertime ? 'checked' : ''}> Second pass may use the agreed +1 overtime day</label></div>
+    <div class="row"><label>Maximum days in a row <input type="number" min="0" max="13" id="maxInARow" value="${s.maxInARow}" style="width:60px"></label>
+      <span class="muted">counts days worked at the end of last week (0 = no limit)</span></div>
+    <p class="muted">Whenever a carer ends up working 6 or more days in a row (for example added by hand), the next 2 days are kept off
+      for them, and going back sooner is flagged red.</p>
     <div class="row"><label><input type="checkbox" id="weekendRule" ${s.weekendRule !== false ? 'checked' : ''}> Weekends off: aim for every 2 weeks, never more than 2 weekends worked in a row</label></div>
     <p class="muted">Saturday and Sunday are planned first, then Monday to Friday. Order used each day: (0) runs limited to named carers,
       (1) a driver on every double-up, (2) second carer on double-ups (pass 1 uses non-drivers only, saving drivers),
@@ -914,6 +1092,8 @@ function sampleData() {
     mk('Hana Price', 'F', false, 5), mk('Isla Reed', 'F', true, 4), mk('Jade Shaw', 'F', false, 5),
     mk('Kyle Turner', 'M', true, 5), mk('Lucy Vance', 'F', false, 4), mk('Mia Walsh', 'F', true, 5),
   ];
+  const pair = ['Amy Hughes', 'Ben Clarke'].map(n => s.carers.find(c => c.name === n));
+  pair[0].notWith = [pair[1].id]; pair[1].notWith = [pair[0].id];
   const named = ['Beth Jones', 'Hana Price', 'Jade Shaw'].map(n => s.carers.find(c => c.name === n).id);
   s.runs = [
     { id: uid(), name: 'Run 1', type: 'double', gender: 'any', days: all.slice() },
@@ -973,6 +1153,12 @@ document.getElementById('app').addEventListener('click', e => {
       if (!ui.editCarer.name) { alert('Please enter a name.'); return; }
       const i = state.carers.findIndex(c => c.id === ui.editCarer.id);
       if (i >= 0) state.carers[i] = ui.editCarer; else state.carers.push(ui.editCarer);
+      for (const o of state.carers) { // "can't work with" applies both ways, so keep the other carers' lists in step
+        if (o.id === ui.editCarer.id) continue;
+        const set = new Set(o.notWith || []);
+        if (ui.editCarer.notWith.includes(o.id)) set.add(ui.editCarer.id); else set.delete(ui.editCarer.id);
+        o.notWith = [...set];
+      }
       ui.editCarer = null; break;
     }
     case 'delCarer': {
@@ -980,6 +1166,7 @@ document.getElementById('app').addEventListener('click', e => {
       if (!confirm(`Remove ${c.name}? They will be taken off all schedules. (Tip: untick "Active" instead to keep their history.)`)) return;
       state.carers = state.carers.filter(x => x.id !== c.id);
       for (const r of state.runs) if (r.allowed) r.allowed = r.allowed.filter(id => id !== c.id);
+      for (const o of state.carers) if (o.notWith) o.notWith = o.notWith.filter(id => id !== c.id);
       for (const w of Object.values(state.weeks)) for (const byDay of Object.values(w.cells)) for (const cell of Object.values(byDay)) {
         for (const s of cell.slots) if (s.c === c.id) { s.c = null; s.locked = false; }
         if (cell.shadow && cell.shadow.c === c.id) cell.shadow.c = null;
@@ -1035,6 +1222,8 @@ document.getElementById('app').addEventListener('change', e => {
     ui.week = mondayOf(t.value); ui.report = null;
   } else if (t.id === 'secondPass' || t.id === 'secondPassSetting') {
     state.settings.secondPass = t.checked;
+  } else if (t.id === 'maxInARow') {
+    state.settings.maxInARow = Math.max(0, Math.min(13, Number(t.value) || 0));
   } else if (t.id === 'weekendRule') {
     state.settings.weekendRule = t.checked;
   } else if (t.id === 'useOvertime') {

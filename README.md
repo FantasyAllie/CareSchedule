@@ -16,7 +16,8 @@ in the same browser, otherwise the browser treats it as a fresh copy.
 ## Features
 
 - **Carers** – add, edit, remove (or mark inactive). Each has gender, driver / non-driver, days per week,
-  an agreed +1 overtime day, whether they can go on double-ups, singles or both, which weekdays they can work, and dated annual leave / sickness.
+  an agreed +1 overtime day, whether they can go on double-ups, singles or both, which weekdays they can work, dated annual leave / sickness, and a **Can't work with** list (e.g. a married couple) – they are never put
+  on the same run on the same day. It applies both ways, so it only needs setting on one of them.
   The carers list shows whether each person is due a weekend off, and flags anyone who has worked 2 weekends
   in a row as **⚑ Weekend off priority**.
 - **Runs** – add, remove, rename, reorder. Double-up (2 carers) or single (1 carer); male only, female only,
@@ -43,7 +44,7 @@ Each day:
    agreed a +1 overtime day.
 
 Always enforced: no-one is booked twice in one day, no-one goes over their days per week, gender rules,
-double-ups-only / singles-only carers,
+double-ups-only / singles-only carers, carers who can't work together,
 named-carer runs, leave / sickness / availability.
 
 ### Looking back over the past 3 months
@@ -59,6 +60,13 @@ Auto-fill reads the previous 13 weeks of schedules saved in the app (fill weeks 
 - **Same 2 runs for 3 weeks** – carers are kept on their current pair of runs (e.g. Mon–Wed on Run 2, a day
   off, then Fri–Sat on Run 4) for 3 weeks, then moved to a different pair. Within a week it avoids a 3rd
   different run and keeps runs in blocks of days.
+- **No more than 5 days in a row** – counts the days worked at the end of last week (and the start of next
+  week, if it is already scheduled). Auto-fill never goes over it; if that would leave a gap, it swaps one of
+  a carer's other shifts to someone else so they can cover it. Going over by hand is flagged red. The limit
+  can be changed in Settings (0 = no limit).
+- **2 days off after 6+ in a row** – if a carer ends up working 6 or 7 days in a row for any reason (added by
+  hand, or the limit above raised), auto-fill keeps the next 2 days off for them, including into next week.
+  Putting them back on sooner is flagged red.
 - **Days off together** – avoids leaving a single day off sandwiched between working days.
 - **Random, not alphabetical** – runs and carers are shuffled each time, so pressing Auto-fill again gives
   a different version.
