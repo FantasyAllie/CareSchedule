@@ -151,7 +151,7 @@ function seeded(seed) { return () => ((seed = (seed * 1664525 + 1013904223) >>> 
 test('carers set to double-ups only or singles only stay on those runs', () => {
   const s = E.newState();
   s.carers = [carer('DO', 'F', true, 7, { runTypes: 'double' }), carer('SO', 'F', true, 7, { runTypes: 'single' }),
-    carer('B1', 'F', true, 7), carer('B2', 'F', false, 7)];
+    carer('B1', 'F', true, 7), carer('B2', 'F', false, 7), carer('B3', 'F', true, 7)];
   s.runs = [run('D', 'double'), run('S', 'single')];
   for (let i = 0; i < 10; i++) {
     const r = E.autoFill(s, WEEK, { random: seeded(i) });
@@ -162,17 +162,25 @@ test('carers set to double-ups only or singles only stay on those runs', () => {
   assert(E.validate(s, WEEK).list.some(i => i.level === 'error' && /double-ups only/.test(i.msg)));
 });
 
-function rosterState() {
+test('no more than 5 days in a row, counting last week', () => {
   const s = E.newState();
-  s.carers = [
-    carer('M1', 'M', true, 5), carer('M2', 'M', true, 4, { overtime: true }), carer('M3', 'M', false, 5),
-    carer('M4', 'M', true, 3), carer('F1', 'F', true, 5), carer('F2', 'F', false, 5), carer('F3', 'F', true, 4),
-    carer('F4', 'F', false, 4), carer('F5', 'F', true, 5), carer('F6', 'F', false, 3, { runTypes: 'double' }), carer('F7', 'F', true, 5),
-    carer('F8', 'F', false, 5), carer('F9', 'F', true, 4, { runTypes: 'single' }), carer('F10', 'F', true, 5), carer('F11', 'F', false, 4),
-  ];
-  s.runs = [run('R1', 'double'), run('R2', 'double', 'F'), run('R3', 'double'), run('R4', 'single'), run('R5', 'single', 'F')];
-  return s;
-}
+  s.carers = [carer('A', 'F', true, 7), carer('B', 'F', true, 7)];
+  s.runs = [run('S', 'single')];
+  const last = E.getWeek(s, E.addDays(WEEK, -7));
+  for (const d of [2, 3, 4, 5, 6]) E.getCell(last, s.runs[0], d).slots[0].c = 'A'; // Wed-Sun last week
+  for (let i = 0; i < 20; i++) {
+    E.autoFill(s, WEEK, { random: seeded(i) });
+    assert.notStrictEqual(E.getCell(E.getWeek(s, WEEK), s.runs[0], 0).slots[0].c, 'A', 'A would be on a 6th day in a row');
+    for (const c of ['A', 'B']) {
+      const days = [2, 3, 4, 5, 6].map(d => E.getCell(last, s.runs[0], d).slots[0].c === c)
+        .concat([0, 1, 2, 3, 4, 5, 6].map(d => E.getCell(E.getWeek(s, WEEK), s.runs[0], d).slots[0].c === c));
+      let run = 0;
+      for (const w of days) { run = w ? run + 1 : 0; assert(run <= 5, `${c} worked ${run} days in a row`); }
+    }
+  }
+  E.getCell(E.getWeek(s, WEEK), s.runs[0], 0).slots[0] = { c: 'A', locked: true, override: false };
+  assert(E.validate(s, WEEK).list.some(i => i.level === 'error' && /A: 6 days in a row/.test(i.msg)));
+});
 
 function placementsOf(s, weeks) {
   const worked = {}, runs = {}; // worked[id] = flat day list; runs[id][weekIndex] = {runId: days}
@@ -249,6 +257,8 @@ test('13 weeks in a row: weekends off, run pairs, days off grouped, full cover',
     const wk = weeks.map((_, i) => days[i * 7 + 5] || days[i * 7 + 6]);
     for (let i = 0; i + 2 < wk.length; i++) assert(!(wk[i] && wk[i + 1] && wk[i + 2]), `${c.id} worked 3 weekends in a row`);
     for (let i = 0; i + 1 < wk.length; i++) { windows++; if (!wk[i] || !wk[i + 1]) windowsOff++; }
+    let inARow = 0;
+    for (const w of days) { inARow = w ? inARow + 1 : 0; assert(inARow <= 5, `${c.id} worked ${inARow} days in a row`); }
     for (let i = 1; i + 1 < days.length; i++) if (!days[i]) { offDays++; if (days[i - 1] && days[i + 1]) lone++; }
     let pair = null, streak = 0;
     for (const wr of runs[c.id]) {

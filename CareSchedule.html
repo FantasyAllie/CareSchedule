@@ -103,7 +103,7 @@ function newState() {
     carers: [],
     runs: [],
     weeks: {},
-    settings: { genderPriority: 'M', secondPass: true, useOvertime: true, weekendRule: true },
+    settings: { genderPriority: 'M', secondPass: true, useOvertime: true, weekendRule: true, maxInARow: 5 },
   };
 }
 
@@ -215,6 +215,33 @@ function history(state, weekStart, weeks) {
     }
   }
   return h;
+}
+
+// days[i] = whether each carer works day i of the week starting weekStart (empty if no schedule that week)
+function weekDays(state, weekStart) {
+  const week = state.weeks[weekStart];
+  const out = {};
+  for (const c of state.carers) out[c.id] = DAYS.map(() => false);
+  if (!week) return out;
+  for (const run of state.runs) {
+    for (let d = 0; d < 7; d++) {
+      const cell = run.days[d] && week.cells[run.id] && week.cells[run.id][d];
+      if (cell) for (const id of cellCarers(cell)) if (out[id]) out[id][d] = true;
+    }
+  }
+  return out;
+}
+
+// Longest run of consecutive working days that touches this week, looking back into history and
+// forward into next week if it has already been scheduled. working(d) covers d from -7*HISTORY_WEEKS to 13.
+function longestStretch(working) {
+  let best = 0, cur = 0;
+  for (let d = -7 * HISTORY_WEEKS; d <= 13; d++) {
+    cur = working(d) ? cur + 1 : 0;
+    if (cur && d >= 0 && d <= 6) best = Math.max(best, cur);
+    if (cur && d > 6 && cur > d - 6) best = Math.max(best, cur); // stretch that started this week
+  }
+  return best;
 }
 
 // Number of weekends in a row worked, counting back from last week.
@@ -344,15 +371,48 @@ function autoFill(state, weekStart, opts) {
   const genderRank = c => opts.genderPriority === 'none' ? 0 : (c.gender === opts.genderPriority ? 0 : 1);
   // anyone who has worked the last 2 weekends gets this one off – never 3 weekends in a row
   const weekendBlocked = (c, d) => d >= 5 && opts.weekendRule !== false && streak[c.id] >= 2;
+  // never more than maxInARow working days in a row, counting last week's days and next week's (if scheduled)
+  const nextWeek = weekDays(state, addDays(weekStart, 7));
+  const isWorking = (c, d) => d < 0 ? !!hist[c.id].days[hist[c.id].days.length + d]
+    : d > 6 ? nextWeek[c.id][d - 7] : booked[d].has(c.id);
+  const maxInARow = Number(opts.maxInARow) || 0;
+  // length of the working stretch the carer would be on if they also worked day d
+  const stretchWith = (c, d) => {
+    let n = 1;
+    for (let e = d - 1; isWorking(c, e) && n <= 14; e--) n++;
+    for (let e = d + 1; e <= 13 && isWorking(c, e) && n <= 14; e++) n++;
+    return n;
+  };
+  const tooManyInARow = (c, d) => maxInARow > 0 && stretchWith(c, d) > maxInARow;
+
+  // every hard rule except the days-in-a-row limit and days per week, which callers check
+  const allowedHere = (c, run, d, rule, passNo) =>
+    genderOk(run, c) && runTypeOk(run, c) && allowedOk(run, c) && ok(c, d) && !booked[d].has(c.id) &&
+    !weekendBlocked(c, d) &&
+    !(reserved.has(c.id) && !isSpecific(run) && (passNo === 1 || d >= 5)) &&
+    (!rule.needDriver || c.driver) &&
+    (!rule.nonDriverOnly || !c.driver);
+  const eligible = (c, run, d, rule, cap, passNo) =>
+    allowedHere(c, run, d, rule, passNo) && !tooManyInARow(c, d) && worked[c.id].size < cap(c);
+
+  const place = (c, run, d, cell, idx) => {
+    cell.slots[idx].c = c.id;
+    booked[d].add(c.id);
+    worked[c.id].add(d);
+    runCount[c.id][run.id] = (runCount[c.id][run.id] || 0) + 1;
+    dayRun[c.id][d] = run.id;
+  };
+  const unplace = (c, run, d, cell, idx) => {
+    cell.slots[idx].c = null;
+    booked[d].delete(c.id);
+    worked[c.id].delete(d);
+    runCount[c.id][run.id]--;
+    if (!runCount[c.id][run.id]) delete runCount[c.id][run.id];
+    delete dayRun[c.id][d];
+  };
 
   function pick(run, d, cell, idx, rule, cap, passNo) {
-    const cands = carers.filter(c =>
-      genderOk(run, c) && runTypeOk(run, c) && allowedOk(run, c) && ok(c, d) && !booked[d].has(c.id) &&
-      !weekendBlocked(c, d) &&
-      !(reserved.has(c.id) && !isSpecific(run) && (passNo === 1 || d >= 5)) &&
-      worked[c.id].size < cap(c) &&
-      (!rule.needDriver || c.driver) &&
-      (!rule.nonDriverOnly || !c.driver));
+    const cands = carers.filter(c => eligible(c, run, d, rule, cap, passNo));
     if (!cands.length) return false;
     const score = c => {
       const left = cap(c) - worked[c.id].size;
@@ -383,13 +443,51 @@ function autoFill(state, weekStart, opts) {
         (!rule.needDriver ? (a.driver - b.driver) : 0) ||  // keep drivers free where a driver isn't needed
         (sb.soft - sa.soft);                               // weighted preferences (see WEIGHTS)
     });
-    const c = cands[0];
-    cell.slots[idx].c = c.id;
-    booked[d].add(c.id);
-    worked[c.id].add(d);
-    runCount[c.id][run.id] = (runCount[c.id][run.id] || 0) + 1;
-    dayRun[c.id][d] = run.id;
+    place(cands[0], run, d, cell, idx);
     return true;
+  }
+
+  // Fill a gap that is only blocked by the days-in-a-row limit: hand one of carer c's other shifts in that
+  // stretch to someone else, then put c in the gap.
+  function swapIntoGap(run, d, cell, idx, cap) {
+    const rule = { needDriver: needsDriver(run) && !hasDriver(cell) };
+    const blocked = shuffle(carers.filter(c => tooManyInARow(c, d) && allowedHere(c, run, d, rule, 2) &&
+      worked[c.id].size <= cap(c)), rng);
+    for (const c of blocked) {
+      for (const e of shuffle([...worked[c.id]], rng)) {
+        const spot = state.runs.filter(r => r.days[e]).map(r => ({ r, cell: getCell(week, r, e) }))
+          .map(x => Object.assign(x, { i: x.cell.slots.findIndex(sl => sl.c === c.id && !sl.locked) }))
+          .find(x => x.i >= 0);
+        if (!spot) continue;
+        unplace(c, spot.r, e, spot.cell, spot.i);
+        if (!tooManyInARow(c, d) && worked[c.id].size < cap(c)) {
+          const ruleE = { needDriver: needsDriver(spot.r) && !hasDriver(spot.cell) };
+          const y = shuffle(carers.filter(y => y !== c && eligible(y, spot.r, e, ruleE, cap, 2)), rng)[0];
+          if (y) {
+            place(y, spot.r, e, spot.cell, spot.i);
+            place(c, run, d, cell, idx);
+            return true;
+          }
+        }
+        place(c, spot.r, e, spot.cell, spot.i); // undo
+      }
+    }
+    return false;
+  }
+
+  function repairGaps() {
+    if (!maxInARow) return 0;
+    const cap = c => capacity(c, opts.secondPass && opts.useOvertime);
+    let fixed = 0;
+    for (const d of DAY_ORDER) {
+      for (const run of state.runs) {
+        if (!run.days[d]) continue;
+        const cell = getCell(week, run, d);
+        let i;
+        while ((i = emptyIdx(cell)) >= 0 && swapIntoGap(run, d, cell, i, cap)) fixed++;
+      }
+    }
+    return fixed;
   }
 
   const hasDriver = cell => cell.slots.some(s => {
@@ -445,6 +543,8 @@ function autoFill(state, weekStart, opts) {
     const f2 = runPass(2);
     log.push(`Pass 2: filled ${f2} more slot(s) using spare carers${opts.useOvertime ? ' and agreed overtime' : ''}.`);
   }
+  const f3 = repairGaps();
+  if (f3) log.push(`Swapped shifts to fill ${f3} more slot(s) without going over ${maxInARow} days in a row.`);
   return { log, issues: validate(state, weekStart) };
 }
 
@@ -496,6 +596,7 @@ function validate(state, weekStart) {
   }
 
   const hist = history(state, weekStart);
+  const nextWeek = weekDays(state, addDays(weekStart, 7));
   const carers = {};
   for (const c of state.carers) {
     const days = DAYS.map((_, d) => (placements[d][c.id] || []).length > 0);
@@ -507,6 +608,12 @@ function validate(state, weekStart) {
     if (state.settings.weekendRule !== false && (days[5] || days[6])) {
       if (ws >= 2) list.push({ level: 'error', msg: `${c.name}: would be a 3rd weekend in a row – needs this weekend off` });
     }
+    const maxInARow = Number(state.settings.maxInARow) || 0;
+    if (maxInARow && n) {
+      const next = nextWeek[c.id];
+      const stretch = longestStretch(d => d < 0 ? !!h.days[h.days.length + d] : d > 6 ? next[d - 7] : days[d]);
+      if (stretch > maxInARow) list.push({ level: 'error', msg: `${c.name}: ${stretch} days in a row (maximum ${maxInARow})` });
+    }
     if (n > capacity(c, true)) list.push({ level: 'error', msg: `${c.name}: ${n} days booked, maximum is ${capacity(c, true)}` });
     else if (n > capacity(c, false)) list.push({ level: 'warn', msg: `${c.name}: working an overtime day (${n} days)` });
   }
@@ -514,7 +621,7 @@ function validate(state, weekStart) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { DAYS, HISTORY_WEEKS, ROTATION_WEEKS, history, weekendStreak, rotation, uid, addDays, mondayOf, newState, getWeek, getCell, carerStatus, capacity, autoFill, validate, clearUnlocked };
+  module.exports = { DAYS, HISTORY_WEEKS, weekDays, longestStretch, ROTATION_WEEKS, history, weekendStreak, rotation, uid, addDays, mondayOf, newState, getWeek, getCell, carerStatus, capacity, autoFill, validate, clearUnlocked };
 }
 // ===== ENGINE END =====
 </script>
@@ -876,6 +983,8 @@ function viewSettings() {
         <option value="none" ${s.genderPriority === 'none' ? 'selected' : ''}>No preference</option></select></label></div>
     <div class="row"><label><input type="checkbox" id="secondPassSetting" ${s.secondPass ? 'checked' : ''}> Do a second pass to fill gaps with spare carers (incl. spare drivers)</label></div>
     <div class="row"><label><input type="checkbox" id="useOvertime" ${s.useOvertime ? 'checked' : ''}> Second pass may use the agreed +1 overtime day</label></div>
+    <div class="row"><label>Maximum days in a row <input type="number" min="0" max="13" id="maxInARow" value="${s.maxInARow}" style="width:60px"></label>
+      <span class="muted">counts days worked at the end of last week (0 = no limit)</span></div>
     <div class="row"><label><input type="checkbox" id="weekendRule" ${s.weekendRule !== false ? 'checked' : ''}> Weekends off: aim for every 2 weeks, never more than 2 weekends worked in a row</label></div>
     <p class="muted">Saturday and Sunday are planned first, then Monday to Friday. Order used each day: (0) runs limited to named carers,
       (1) a driver on every double-up, (2) second carer on double-ups (pass 1 uses non-drivers only, saving drivers),
@@ -1035,6 +1144,8 @@ document.getElementById('app').addEventListener('change', e => {
     ui.week = mondayOf(t.value); ui.report = null;
   } else if (t.id === 'secondPass' || t.id === 'secondPassSetting') {
     state.settings.secondPass = t.checked;
+  } else if (t.id === 'maxInARow') {
+    state.settings.maxInARow = Math.max(0, Math.min(13, Number(t.value) || 0));
   } else if (t.id === 'weekendRule') {
     state.settings.weekendRule = t.checked;
   } else if (t.id === 'useOvertime') {

@@ -59,6 +59,10 @@ Auto-fill reads the previous 13 weeks of schedules saved in the app (fill weeks 
 - **Same 2 runs for 3 weeks** – carers are kept on their current pair of runs (e.g. Mon–Wed on Run 2, a day
   off, then Fri–Sat on Run 4) for 3 weeks, then moved to a different pair. Within a week it avoids a 3rd
   different run and keeps runs in blocks of days.
+- **No more than 5 days in a row** – counts the days worked at the end of last week (and the start of next
+  week, if it is already scheduled). Auto-fill never goes over it; if that would leave a gap, it swaps one of
+  a carer's other shifts to someone else so they can cover it. Going over by hand is flagged red. The limit
+  can be changed in Settings (0 = no limit).
 - **Days off together** – avoids leaving a single day off sandwiched between working days.
 - **Random, not alphabetical** – runs and carers are shuffled each time, so pressing Auto-fill again gives
   a different version.
