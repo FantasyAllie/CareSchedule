@@ -188,20 +188,9 @@ test('carer who worked the last 2 weekends is kept off this weekend', () => {
     assert.notStrictEqual(E.getCell(w, s.runs[0], 5).slots[0].c, 'A');
     assert.notStrictEqual(E.getCell(w, s.runs[0], 6).slots[0].c, 'A');
   }
+  assert.strictEqual(E.validate(s, WEEK).carers.A.weekendStreak, 2, 'A is flagged for weekend off priority');
   E.getCell(E.getWeek(s, WEEK), s.runs[0], 6).slots[0] = { c: 'A', locked: true, override: false };
   assert(E.validate(s, WEEK).list.some(i => i.level === 'error' && /3rd weekend in a row/.test(i.msg)));
-});
-
-test('weekend-priority carer who worked last weekend gets this weekend off', () => {
-  const s = E.newState();
-  s.carers = [carer('A', 'F', true, 7, { weekendPriority: true }), carer('B', 'F', true, 7), carer('C', 'F', true, 7)];
-  s.runs = [run('S', 'single')];
-  E.getCell(E.getWeek(s, E.addDays(WEEK, -7)), s.runs[0], 6).slots[0].c = 'A';
-  for (let i = 0; i < 20; i++) {
-    E.autoFill(s, WEEK, { random: seeded(i) });
-    const w = E.getWeek(s, WEEK);
-    assert(![5, 6].some(d => E.getCell(w, s.runs[0], d).slots[0].c === 'A'));
-  }
 });
 
 test('person-specific runs only use their carers, need no driver, and are filled first', () => {
@@ -221,7 +210,7 @@ function rosterState() {
   s.carers = [
     carer('M1', 'M', true, 5), carer('M2', 'M', true, 4, { overtime: true }), carer('M3', 'M', false, 5),
     carer('M4', 'M', true, 3), carer('M5', 'M', true, 5), carer('F1', 'F', true, 5), carer('F2', 'F', false, 5),
-    carer('F3', 'F', true, 4, { weekendPriority: true }), carer('F4', 'F', false, 4), carer('F5', 'F', true, 5),
+    carer('F3', 'F', true, 4), carer('F4', 'F', false, 4), carer('F5', 'F', true, 5),
     carer('F6', 'F', false, 3), carer('F7', 'F', true, 5), carer('F8', 'F', false, 5), carer('F9', 'F', true, 4),
     carer('F10', 'F', true, 5), carer('F11', 'F', false, 4), carer('F12', 'F', false, 5),
   ];

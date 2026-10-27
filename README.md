@@ -16,8 +16,9 @@ in the same browser, otherwise the browser treats it as a fresh copy.
 ## Features
 
 - **Carers** – add, edit, remove (or mark inactive). Each has gender, driver / non-driver, days per week,
-  an agreed +1 overtime day, which weekdays they can work, dated annual leave / sickness, and an optional
-  **⚑ Weekend priority** flag. The carers list shows whether each person is due a weekend off.
+  an agreed +1 overtime day, which weekdays they can work, and dated annual leave / sickness.
+  The carers list shows whether each person is due a weekend off, and flags anyone who has worked 2 weekends
+  in a row as **⚑ Weekend off priority**.
 - **Runs** – add, remove, rename, reorder. Double-up (2 carers) or single (1 carer); male only, female only,
   or either; untick days a run doesn't operate. Runs need a driver unless "Needs a driver" is unticked.
   **Only these carers** limits a run to named people (e.g. a run covered by 3 non-drivers).
@@ -49,9 +50,10 @@ named-carer runs, leave / sickness / availability.
 Auto-fill reads the previous 13 weeks of schedules saved in the app (fill weeks in date order):
 
 - **Weekends off** – aims for a full weekend (Sat + Sun) off every 2 weeks: anyone who worked last
-  weekend is steered away from this one. Nobody works more than 2 weekends in a row (so at worst every
-  3 weeks) – putting them on by hand is flagged red. Carers flagged **⚑ Weekend priority** who worked last
-  weekend are kept off this one unless they are the only way to cover a run. People working a weekend
+  weekend is steered away from this one. Anyone who has worked 2 weekends in a row is automatically flagged
+  **⚑ Weekend off priority** and kept off the next one, so nobody goes past 3 weeks – putting them on by
+  hand is flagged red. The flag comes only from what people have actually worked, so nobody is favoured
+  by hand. People working a weekend
   are given both days where possible, so others get whole weekends off.
 - **Same 2 runs for 3 weeks** – carers are kept on their current pair of runs (e.g. Mon–Wed on Run 2, a day
   off, then Fri–Sat on Run 4) for 3 weeks, then moved to a different pair. Within a week it avoids a 3rd
