@@ -16,7 +16,7 @@ in the same browser, otherwise the browser treats it as a fresh copy.
 ## Features
 
 - **Carers** – add, edit, remove (or mark inactive). Each has gender, driver / non-driver, days per week,
-  an agreed +1 overtime day, which weekdays they can work, and dated annual leave / sickness.
+  an agreed +1 overtime day, whether they can go on double-ups, singles or both, which weekdays they can work, and dated annual leave / sickness.
   The carers list shows whether each person is due a weekend off, and flags anyone who has worked 2 weekends
   in a row as **⚑ Weekend off priority**.
 - **Runs** – add, remove, rename, reorder. Double-up (2 carers) or single (1 carer); male only, female only,
@@ -43,6 +43,7 @@ Each day:
    agreed a +1 overtime day.
 
 Always enforced: no-one is booked twice in one day, no-one goes over their days per week, gender rules,
+double-ups-only / singles-only carers,
 named-carer runs, leave / sickness / availability.
 
 ### Looking back over the past 3 months
