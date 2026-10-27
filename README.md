@@ -37,10 +37,25 @@ For each day, Monday → Sunday:
    including spare drivers, and optionally carers who have agreed a +1 overtime day.
 
 Always enforced: no-one is booked twice in one day, no-one goes over their days per week, gender rules,
-leave / sickness / availability. Male-only and female-only runs are filled before mixed runs. When several
-carers could fill a slot it prefers: carers who must work every remaining available day to meet their
-contract → non-drivers for non-driver slots → **males first** (changeable in Settings) → carers furthest
-behind on their contracted days.
+leave / sickness / availability. Male-only and female-only runs are filled before mixed runs.
+
+### Looking back over the past month
+
+Auto-fill reads the previous 4 weeks of schedules saved in the app (fill weeks in date order):
+
+- **At least 1 weekend off in every 4 weeks** – anyone who has worked each of the last 3 weekends is kept
+  off this Saturday and Sunday (can be turned off in Settings). Putting them on by hand is flagged red.
+- **Days off together** – it prefers carers who worked yesterday, and avoids leaving a single day off
+  sandwiched between working days (including across the Sunday → Monday change of week).
+- **No same run week after week** – carers who have done a run a lot recently, or did it on the same day
+  last week, are less likely to get it again.
+- **Random** – each auto-fill is shuffled, so pressing it again gives a different version.
+
+When several carers could fill a slot, it first takes anyone who must work every remaining available day to
+meet their contract, then keeps drivers out of non-driver slots, then weighs up: how far behind on contracted
+days they are, **males first** (changeable in Settings), the days-off and run-variety preferences above, and
+a random shuffle. The Carer summary shows each carer's last 4 weeks: days worked, weekends off and most
+frequent runs.
 
 ## Tests
 

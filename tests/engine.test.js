@@ -143,4 +143,81 @@ test('validation flags double booking and leave override', () => {
   assert(/error:S2 Mon: A: Annual leave$/m.test(msgs));
 });
 
+// --- history-aware rules ---
+function seeded(seed) { return () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296); }
+
+function rosterState() {
+  const s = E.newState();
+  s.carers = [
+    carer('M1', 'M', true, 5), carer('M2', 'M', true, 4, { overtime: true }), carer('M3', 'M', false, 5),
+    carer('M4', 'M', true, 3), carer('F1', 'F', true, 5), carer('F2', 'F', false, 5), carer('F3', 'F', true, 4),
+    carer('F4', 'F', false, 4), carer('F5', 'F', true, 5), carer('F6', 'F', false, 3), carer('F7', 'F', true, 5),
+    carer('F8', 'F', false, 5), carer('F9', 'F', true, 4), carer('F10', 'F', true, 5), carer('F11', 'F', false, 4),
+  ];
+  s.runs = [run('R1', 'double'), run('R2', 'double', 'F'), run('R3', 'double'), run('R4', 'single'), run('R5', 'single', 'F')];
+  return s;
+}
+
+test('carer who worked the last 3 weekends is kept off this weekend', () => {
+  const s = E.newState();
+  s.carers = [carer('A', 'F', true, 7), carer('B', 'F', true, 7)];
+  s.runs = [run('S', 'single')];
+  for (let w = 1; w <= 3; w++) {
+    const week = E.getWeek(s, E.addDays(WEEK, -7 * w));
+    E.getCell(week, s.runs[0], 5).slots[0].c = 'A';
+  }
+  for (let i = 0; i < 20; i++) {
+    E.autoFill(s, WEEK, { random: seeded(i) });
+    const w = E.getWeek(s, WEEK);
+    assert.notStrictEqual(E.getCell(w, s.runs[0], 5).slots[0].c, 'A');
+    assert.notStrictEqual(E.getCell(w, s.runs[0], 6).slots[0].c, 'A');
+  }
+  // and validation flags it if someone puts A on anyway
+  E.getCell(E.getWeek(s, WEEK), s.runs[0], 6).slots[0] = { c: 'A', locked: true, override: false };
+  assert(E.validate(s, WEEK).list.some(i => i.level === 'error' && /needs this weekend off/.test(i.msg)));
+});
+
+test('8 weeks in a row: weekend off every 4 weeks, varied runs, days off grouped', () => {
+  const s = rosterState();
+  const weeks = [...Array(8)].map((_, i) => E.addDays(WEEK, 7 * i));
+  weeks.forEach((w, i) => { E.autoFill(s, w, { random: seeded(100 + i) }); check(s); });
+  const worked = {}; // id -> flat list of days
+  const runDays = {}; // id -> {run: n}
+  for (const c of s.carers) { worked[c.id] = []; runDays[c.id] = {}; }
+  for (const w of weeks) {
+    const week = E.getWeek(s, w);
+    for (let d = 0; d < 7; d++) {
+      const on = {};
+      for (const r of s.runs) for (const sl of E.getCell(week, r, d).slots) if (sl.c) on[sl.c] = r.id;
+      for (const c of s.carers) {
+        worked[c.id].push(!!on[c.id]);
+        if (on[c.id]) runDays[c.id][on[c.id]] = (runDays[c.id][on[c.id]] || 0) + 1;
+      }
+    }
+  }
+  let lone = 0, offDays = 0;
+  for (const c of s.carers) {
+    const days = worked[c.id];
+    for (let i = 0; i + 3 < weeks.length; i++) {
+      const weekendsOff = [0, 1, 2, 3].filter(k => !days[(i + k) * 7 + 5] && !days[(i + k) * 7 + 6]).length;
+      assert(weekendsOff >= 1, `${c.id} had no weekend off in weeks ${i + 1}-${i + 4}`);
+    }
+    const total = days.filter(Boolean).length;
+    const top = Math.max(...Object.values(runDays[c.id]));
+    assert(top / total < 0.75, `${c.id} spent ${top}/${total} days on one run`);
+    for (let i = 1; i + 1 < days.length; i++) {
+      if (!days[i]) { offDays++; if (days[i - 1] && days[i + 1]) lone++; }
+    }
+  }
+  console.log(`     (${lone} of ${offDays} days off were single days between working days)`);
+  assert(lone / offDays < 0.25, 'too many single days off');
+});
+
+test('auto-fill is random: different runs give different schedules', () => {
+  const a = rosterState(), b = rosterState();
+  E.autoFill(a, WEEK, { random: seeded(1) });
+  E.autoFill(b, WEEK, { random: seeded(2) });
+  assert.notStrictEqual(JSON.stringify(a.weeks), JSON.stringify(b.weeks));
+});
+
 console.log(`\n${passed} tests passed`);
