@@ -177,6 +177,18 @@ ipcMain.handle('data:chooseFolder', async () => {
   return { changed: true, info: info() };
 });
 
+// Save the page's current print layout (a rota designed for carers) as a PDF.
+ipcMain.handle('pdf:save', async (_, { name, landscape }) => {
+  const pick = await dialog.showSaveDialog(win, {
+    title: 'Save rota as PDF', defaultPath: path.join(app.getPath('documents'), name), filters: [{ name: 'PDF', extensions: ['pdf'] }],
+  });
+  if (pick.canceled || !pick.filePath) return { saved: false };
+  const pdf = await win.webContents.printToPDF({ printBackground: true, preferCSSPageSize: true, landscape: !!landscape });
+  fs.writeFileSync(pick.filePath, pdf);
+  shell.showItemInFolder(pick.filePath);
+  return { saved: true, file: pick.filePath };
+});
+
 function pagePath() {
   return app.isPackaged ? path.join(process.resourcesPath, 'CareSchedule.html') : path.join(__dirname, '..', 'CareSchedule.html');
 }

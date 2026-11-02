@@ -51,6 +51,14 @@
   .tag.M { background: #dbeafe; } .tag.F { background: #fce7f3; }
   .tag.flag { background: #fef3c7; }
   .tag.trainee { background: #e0f2fe; }
+  details.share { position: relative; display: inline-block; }
+  details.share > summary { list-style: none; }
+  details.share > summary::-webkit-details-marker { display: none; }
+  .sharemenu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 240px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.12); padding: 6px; }
+  .sharemenu .smhead { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); padding: 6px 8px 2px; }
+  .sharemenu button { display: block; width: 100%; text-align: left; background: none; border: none; padding: 7px 8px; border-radius: 5px; cursor: pointer; font-size: 13px; color: var(--text); }
+  .sharemenu button:hover { background: #eef2ff; }
   .viewonly { margin-bottom: 12px; padding: 10px 12px; border-radius: 8px; background: #eef2ff; border: 1px solid #a5b4fc; }
   table.leavecal { font-size: 11px; }
   table.leavecal th, table.leavecal td { padding: 2px 3px; text-align: center; min-width: 20px; }
@@ -85,10 +93,43 @@
   .legend { font-size: 12px; color: var(--muted); }
   #print-area { display: none; }
   @media print {
-    header, main > *:not(#print-area) { display: none !important; }
+    body > header, main > *:not(#print-area) { display: none !important; }
     #print-area { display: block; }
     #print-area table { font-size: 11px; }
     #print-area .sheet { page-break-after: always; break-after: page; }
+    #print-area .pub { font-family: "Segoe UI", -apple-system, "Helvetica Neue", Arial, sans-serif; color: #1f2937; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    #print-area .pubhead { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 3px solid #2563eb; padding-bottom: 8px; margin-bottom: 12px; }
+    #print-area .pubhead .org { font-size: 13px; font-weight: 700; color: #2563eb; text-transform: uppercase; letter-spacing: .06em; }
+    #print-area .pubhead h1 { margin: 2px 0; font-size: 26px; }
+    #print-area .pubhead .sub { font-size: 14px; color: #4b5563; }
+    #print-area .pubmeta { font-size: 11px; color: #6b7280; text-align: right; }
+    #print-area table.pubtable { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 11.5px; }
+    #print-area .pubtable th, #print-area .pubtable td { border: none; border-bottom: 1px solid #e5e7eb; padding: 6px 5px; vertical-align: top; }
+    #print-area .pubtable thead th { background: #1e3a8a; color: #fff; font-size: 12px; text-align: left; }
+    #print-area .pubtable thead th span { display: block; font-weight: 400; font-size: 10.5px; opacity: .85; }
+    #print-area .pubtable thead th:first-child { border-radius: 6px 0 0 0; } #print-area .pubtable thead th:last-child { border-radius: 0 6px 0 0; }
+    #print-area .pubtable tbody th { text-align: left; font-weight: 600; white-space: nowrap; background: #f8fafc; }
+    #print-area .pubtable tbody tr:nth-child(even) td { background: #fafafa; }
+    #print-area .pubtable tr { break-inside: avoid; }
+    #print-area .pubtable td.off { color: #9ca3af; font-style: italic; }
+    #print-area .pubtable .n { text-align: center; width: 40px; }
+    #print-area .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-weight: 700; font-size: 11px; border: 1px solid; }
+    #print-area .pill.shadow { border-style: dashed; font-weight: 600; }
+    #print-area .with { font-size: 10px; color: #4b5563; margin-top: 2px; }
+    #print-area .openbox { margin-top: 12px; padding: 8px 10px; border: 1px solid #f59e0b; background: #fffbeb; border-radius: 8px; font-size: 12px; }
+    #print-area .openchip { display: inline-block; margin: 4px 4px 0 0; padding: 2px 8px; border-radius: 999px; background: #fff; border: 1px solid #f59e0b; font-size: 11px; }
+    #print-area .pubfoot { margin-top: 14px; padding-top: 6px; border-top: 1px solid #e5e7eb; font-size: 10.5px; color: #6b7280; }
+    #print-area .pub.sheet .pubhead h1 { font-size: 30px; }
+    #print-area .days { border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; }
+    #print-area .day { display: flex; align-items: center; min-height: 64px; border-bottom: 1px solid #e5e7eb; }
+    #print-area .day:last-child { border-bottom: none; }
+    #print-area .day .dname { width: 160px; padding: 10px 14px; font-weight: 700; font-size: 16px; background: #f8fafc; align-self: stretch; display: flex; flex-direction: column; justify-content: center; }
+    #print-area .day .dname span { font-weight: 400; font-size: 12px; color: #6b7280; }
+    #print-area .day .dbody { padding: 10px 14px; font-size: 14px; }
+    #print-area .day .dbody .pill { font-size: 14px; padding: 4px 12px; }
+    #print-area .day .dbody .with { font-size: 12px; margin-top: 4px; }
+    #print-area .day.off .dname { color: #9ca3af; } #print-area .offtext { color: #9ca3af; font-style: italic; }
+    #print-area .summary { margin-top: 12px; font-size: 13px; }
     #print-area .sheet table { font-size: 14px; }
     #print-area .sheet td, #print-area .sheet th { padding: 8px; }
     body { background: #fff; }
@@ -1330,6 +1371,10 @@ function undo() {
   render();
 }
 document.getElementById('undoBtn').addEventListener('click', undo);
+// close the Share menu when clicking anywhere else
+document.addEventListener('click', e => {
+  for (const d of document.querySelectorAll('details.share[open]')) if (!d.contains(e.target)) d.removeAttribute('open');
+});
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && !/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) {
     e.preventDefault();
@@ -1448,13 +1493,19 @@ function viewSchedule() {
       <button class="btn danger" data-action="clearAll" ${off}>Clear all</button>
       <button class="btn" data-action="copyPrev" ${off}>Copy previous week</button>
       <button class="btn ${final ? '' : 'final'}" data-action="${final ? 'reopenWeek' : 'finaliseWeek'}">${final ? 'Reopen week' : '✔ Finalise week'}</button>
-      <button class="btn" data-action="csv">Export CSV</button>
-      <select id="printWhat" title="What to print">
-        <option value="runs" ${ui.printWhat === 'runs' ? 'selected' : ''}>Run rota</option>
-        <option value="carers" ${ui.printWhat === 'carers' ? 'selected' : ''}>Carer rota (for the wall)</option>
-        <option value="sheets" ${ui.printWhat === 'sheets' ? 'selected' : ''}>A sheet for each carer</option>
-      </select>
-      <button class="btn" data-action="print">Print</button>
+      <details class="share"><summary class="btn primary">Share ▾</summary>
+        <div class="sharemenu">
+          <div class="smhead">For carers (PDF)</div>
+          <button data-action="share" data-what="pdf-team">📄 Team rota</button>
+          <button data-action="share" data-what="pdf-sheets">📄 One page per carer</button>
+          <div class="smhead">Print</div>
+          <button data-action="share" data-what="runs">🖨 Run rota</button>
+          <button data-action="share" data-what="carers">🖨 Carer rota (for the wall)</button>
+          <button data-action="share" data-what="sheets">🖨 A sheet for each carer</button>
+          <div class="smhead">Spreadsheet</div>
+          <button data-action="share" data-what="csv">⬇ Export CSV</button>
+        </div>
+      </details>
     </div>
     ${final ? `<div class="finalbar">✔ <b>This week is finalised.</b> Auto-fill, Fill gaps only, clearing and editing are switched off so it can't be changed by accident.
       Sickness cover (Report sickness / Find cover) still works. Use <b>Reopen week</b> to make other changes.</div>` : ''}
@@ -1549,14 +1600,86 @@ function carerSelect(run, d, selected, attrs, placeholder) {
   }).join('');
   const chosen = selected && byId(selected);
   const title = chosen ? `${chosen.name} (${chosen.gender === 'M' ? 'male' : 'female'}, ${chosen.driver ? 'driver' : 'non-driver'}${chosen.agency ? ', agency' : ''})` : '';
-  return `<select data-action="assign" data-run="${run.id}" data-day="${d}" title="${esc(title)}" ${attrs}><option value="">${placeholder || '— empty —'}</option>${opts}</select>`;
+  return `<select data-action="assign" data-run="${run.id}" data-day="${d}" title="${esc(title)}" ${attrs}><option value="">${placeholder || '[OPEN]'}</option>${opts}</select>`;
 }
 
 // What to print: 'runs' (run × day), 'carers' (carer × day, for the wall) or 'sheets' (one page per carer).
 function printView(what) {
+  if (what === 'pdf-team') return publishTeam();
+  if (what === 'pdf-sheets') return publishSheets();
   if (what === 'carers') return printCarerRota();
   if (what === 'sheets') return printCarerSheets();
   return printTable();
+}
+
+// Paper size for printing / PDF: landscape for the tables, portrait for one page per carer.
+function setPageSize(landscape) {
+  let el = document.getElementById('pageSize');
+  if (!el) { el = document.createElement('style'); el.id = 'pageSize'; document.head.appendChild(el); }
+  el.textContent = `@page { size: A4 ${landscape ? 'landscape' : 'portrait'}; margin: 10mm; }`;
+}
+
+// ---- Rotas designed for sending to carers (PDF) ----
+// Days not working all show as "Day off", so nobody's sickness or leave is shared with the whole team.
+const RUN_COLOURS = [['#dbeafe', '#1e40af'], ['#dcfce7', '#166534'], ['#fef3c7', '#92400e'], ['#f3e8ff', '#6b21a8'], ['#fee2e2', '#991b1b'],
+  ['#cffafe', '#155e75'], ['#fce7f3', '#9d174d'], ['#ecfccb', '#3f6212'], ['#ede9fe', '#5b21b6'], ['#ffedd5', '#9a3412']];
+function runPill(runName, shadow) {
+  const i = Math.max(0, state.runs.findIndex(r => r.name === runName));
+  const [bg, fg] = RUN_COLOURS[i % RUN_COLOURS.length];
+  return `<span class="pill ${shadow ? 'shadow' : ''}" style="background:${shadow ? '#fff' : bg};color:${fg};border-color:${fg}">${esc(runName)}${shadow ? ' · shadowing' : ''}</span>`;
+}
+const longDate = (iso, opts) => new Date(iso + 'T12:00:00Z').toLocaleDateString('en-GB', Object.assign({ timeZone: 'UTC' }, opts));
+function pubHeader(title, subtitle) {
+  const org = (state.settings.orgName || '').trim();
+  return `<header class="pubhead">
+    <div>${org ? `<div class="org">${esc(org)}</div>` : ''}<h1>${esc(title)}</h1>
+      <div class="sub">${esc(subtitle)}</div></div>
+    <div class="pubmeta">Published ${esc(longDate(todayIso(), { day: 'numeric', month: 'long', year: 'numeric' }))}</div>
+  </header>`;
+}
+const pubFooter = () => `<footer class="pubfoot">Rotas can change – if anything looks wrong, or you can't make a shift, please contact the office.</footer>`;
+const weekTitle = () => `Week commencing ${longDate(ui.week, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}`;
+
+function openShifts() {
+  const week = getWeek(state, ui.week), out = [];
+  for (let d = 0; d < 7; d++) for (const r of state.runs) {
+    if (!r.days[d]) continue;
+    const open = getCell(week, r, d).slots.filter(sl => !sl.c).length;
+    if (open) out.push({ d, run: r.name, open, note: r.gender === 'F' ? 'female carers' : r.gender === 'M' ? 'male carers' : '' });
+  }
+  return out;
+}
+
+function publishTeam() {
+  const people = sortedCarers().filter(c => c.active !== false).map(c => ({ c, wk: carerWeek(c) })).filter(x => !x.c.agency || x.wk.some(Boolean));
+  const head = DAYS.map((d, i) => `<th>${d}<span>${esc(longDate(addDays(ui.week, i), { day: 'numeric', month: 'short' }))}</span></th>`).join('');
+  const rows = people.map(({ c, wk }) => `<tr><th>${esc(c.name)}</th>${wk.map(x => x
+    ? `<td>${runPill(x.run, x.shadow)}${x.with.length ? `<div class="with">with ${esc(x.with.join(', '))}</div>` : ''}</td>`
+    : '<td class="off">Day off</td>').join('')}<td class="n">${wk.filter(Boolean).length}</td></tr>`).join('');
+  const open = openShifts();
+  return `<div class="pub team">
+    ${pubHeader('Team rota', weekTitle())}
+    <table class="pubtable"><thead><tr><th>Carer</th>${head}<th class="n">Days</th></tr></thead><tbody>${rows}</tbody></table>
+    ${open.length ? `<div class="openbox"><b>Open shifts</b> – please let the office know if you can help:
+      ${open.map(o => `<span class="openchip">${DAYS[o.d]} ${esc(longDate(addDays(ui.week, o.d), { day: 'numeric', month: 'short' }))} · ${esc(o.run)}${o.open > 1 ? ` (${o.open} places)` : ''}${o.note ? ` · ${o.note}` : ''}</span>`).join('')}</div>` : ''}
+    ${pubFooter()}
+  </div>`;
+}
+
+function publishSheets() {
+  const pages = sortedCarers().filter(c => c.active !== false).map(c => ({ c, wk: carerWeek(c) })).filter(x => x.wk.some(Boolean)).map(({ c, wk }) => {
+    const runs = [...new Set(wk.filter(Boolean).map(x => x.run))];
+    return `<section class="pub sheet">
+      ${pubHeader(c.name, `Your rota · ${weekTitle()}`)}
+      <div class="days">${wk.map((x, d) => `<div class="day ${x ? '' : 'off'}">
+        <div class="dname">${esc(longDate(addDays(ui.week, d), { weekday: 'long' }))}<span>${esc(longDate(addDays(ui.week, d), { day: 'numeric', month: 'long' }))}</span></div>
+        <div class="dbody">${x ? `${runPill(x.run, x.shadow)}${x.with.length ? `<div class="with">Working with ${esc(x.with.join(', '))}</div>` : ''}` : '<span class="offtext">Day off</span>'}</div>
+      </div>`).join('')}</div>
+      <div class="summary"><b>${wk.filter(Boolean).length}</b> day(s) working this week · ${runs.map(r => runPill(r)).join(' ')}</div>
+      ${pubFooter()}
+    </section>`;
+  }).join('');
+  return pages || '<p>No one is on the schedule this week.</p>';
 }
 
 // For each carer and day this week: { run, with: [names], shadow } or null
@@ -1610,7 +1733,7 @@ function printTable() {
   const rows = state.runs.map(run => `<tr><th>${esc(run.name)}</th>${DAYS.map((_, d) => {
     if (!run.days[d]) return '<td>—</td>';
     const cell = getCell(week, run, d);
-    const people = cell.slots.map(s => esc(name(s.c) || '(empty)')).join('<br>');
+    const people = cell.slots.map(s => esc(name(s.c) || '[OPEN]')).join('<br>');
     return `<td>${people}${cell.shadow.c ? `<br><i>Shadow: ${esc(name(cell.shadow.c))}</i>` : ''}</td>`;
   }).join('')}</tr>`).join('');
   return `<h2>Schedule – week commencing ${fmtDate(ui.week)}</h2>
@@ -1680,7 +1803,7 @@ function exportCsv() {
     lines.push([run.name, ...DAYS.map((_, d) => {
       if (!run.days[d]) return '-';
       const cell = getCell(week, run, d);
-      return cell.slots.map(s => name(s.c) || '(empty)').join(' + ') + (cell.shadow.c ? ` + shadow: ${name(cell.shadow.c)}` : '');
+      return cell.slots.map(s => name(s.c) || '[OPEN]').join(' + ') + (cell.shadow.c ? ` + shadow: ${name(cell.shadow.c)}` : '');
     })].map(q).join(','));
   }
   download(`schedule-${ui.week}.csv`, lines.join('\r\n'), 'text/csv');
@@ -2162,6 +2285,8 @@ function viewSettings() {
   return `
   <div class="panel">
     <h3 style="margin-top:0">Auto-fill rules</h3>
+    <div class="row"><label>Organisation name <input id="orgName" value="${esc(s.orgName || '')}" size="30" placeholder="e.g. Sunrise Home Care"></label>
+      <span class="muted">shown at the top of rotas you share with carers</span></div>
     <div class="row"><label>When choosing between carers, prefer
       <select id="genderPriority">
         <option value="M" ${s.genderPriority === 'M' ? 'selected' : ''}>Males first, then females</option>
@@ -2328,8 +2453,30 @@ document.getElementById('app').addEventListener('click', e => {
         (emptied.length ? ' Choose cover below.' : ' They had no shifts in those dates.');
       break;
     }
-    case 'csv': exportCsv(); return;
-    case 'print': ui.printWhat = document.getElementById('printWhat').value; render(); window.print(); return;
+    case 'share': {
+      const what = b.dataset.what;
+      if (what === 'csv') { exportCsv(); render(); return; }
+      ui.printWhat = what;
+      render();
+      setPageSize(/^(runs|carers|pdf-team)$/.test(what));
+      if (/^pdf-/.test(what)) {
+        const name = `Rota ${what === 'pdf-team' ? 'team' : 'carers'} w-c ${ui.week}`;
+        if (desktop && desktop.savePdf) {
+          desktop.savePdf({ name: name + '.pdf', landscape: what === 'pdf-team' })
+            .then(r => { if (r.saved) alert(`PDF saved:\n${r.file}\n\nReady to send to carers by email or WhatsApp.`); })
+            .catch(err => alert('Could not save the PDF: ' + err.message));
+        } else {
+          // in a browser: the print window opens – choose "Save as PDF" as the printer
+          const title = document.title;
+          document.title = name;
+          window.print();
+          document.title = title;
+        }
+      } else {
+        window.print();
+      }
+      return;
+    }
 
     case 'newCarer': ui.editCarer = blankCarer(); break;
     case 'newAgency': ui.editCarer = blankCarer(true); break;
@@ -2454,6 +2601,8 @@ document.getElementById('app').addEventListener('change', e => {
     state.settings.maxInARow = Math.max(0, Math.min(13, Number(t.value) || 0));
   } else if (t.id === 'weekendRule') {
     state.settings.weekendRule = t.checked;
+  } else if (t.id === 'orgName') {
+    state.settings.orgName = t.value.trim();
   } else if (t.id === 'useAgency') {
     state.settings.useAgency = t.checked;
   } else if (t.id === 'useOvertime') {
