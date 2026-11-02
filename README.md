@@ -59,6 +59,8 @@ in the same browser, otherwise the browser treats it as a fresh copy.
 - **Schedule** – Monday to Sunday grid. Pick carers by hand (the slot is then 🔒 locked and auto-fill
   leaves it alone), add a 3rd shadow / training carer, copy the previous week, print, export CSV.
   Problems are highlighted in red (e.g. no driver, double booked, on leave) and amber (overrides, overtime).
+- **Fill gaps only** – next to Auto-fill week. Fills just the empty slots using the same rules, without
+  moving anyone already on the schedule (Auto-fill week reshuffles every slot that isn't locked).
 - **Sickness cover** – **🤒 Report sickness** on the Schedule marks a carer off sick for the dates given and
   takes them off every shift in that time. For each emptied shift it lists who can cover it without breaking
   any rule, best first (regular staff short of their days, then working the day before/after or on their

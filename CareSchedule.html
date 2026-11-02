@@ -718,6 +718,27 @@ function autoFill(state, weekStart, opts) {
   return { log, issues: validate(state, weekStart) };
 }
 
+// Fill only the empty slots of the week: everyone already placed stays exactly where they are.
+// Works by treating every filled slot as locked for the duration of a normal auto-fill.
+function fillGaps(state, weekStart, opts) {
+  const week = getWeek(state, weekStart);
+  const unlockedFilled = [];
+  for (const run of state.runs) {
+    for (let d = 0; d < 7; d++) {
+      for (const sl of getCell(week, run, d).slots) if (sl.c && !sl.locked) { sl.locked = true; unlockedFilled.push(sl); }
+    }
+  }
+  const empty = () => state.runs.reduce((n, r) => n + r.days.reduce((m, on, d) => m + (on ? getCell(week, r, d).slots.filter(sl => !sl.c).length : 0), 0), 0);
+  const before = empty();
+  let result;
+  try { result = autoFill(state, weekStart, opts); } finally { for (const sl of unlockedFilled) sl.locked = false; }
+  const filled = before - empty();
+  result.log = [`Filled ${filled} of ${before} empty slot(s). Everyone already on the schedule was left where they were.`]
+    .concat(result.log.filter(l => /Agency staff|short of carers/.test(l)));
+  result.filled = filled;
+  return result;
+}
+
 // Checks every cell of the week against the rules. Returns { cells: {key: [issue]}, list: [issue], carers: {...} }.
 function validate(state, weekStart) {
   const week = getWeek(state, weekStart);
@@ -890,7 +911,7 @@ function suggestCover(state, weekStart, runId, d, idx) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { reportSickness, suggestCover, prefersRun, cantPair, DAYS, HISTORY_WEEKS, weekDays, longestStretch, restBreaches, ROTATION_WEEKS, history, weekendStreak, rotation, uid, addDays, mondayOf, newState, getWeek, getCell, carerStatus, capacity, autoFill, validate, clearUnlocked };
+  module.exports = { fillGaps, reportSickness, suggestCover, prefersRun, cantPair, DAYS, HISTORY_WEEKS, weekDays, longestStretch, restBreaches, ROTATION_WEEKS, history, weekendStreak, rotation, uid, addDays, mondayOf, newState, getWeek, getCell, carerStatus, capacity, autoFill, validate, clearUnlocked };
 }
 // ===== ENGINE END =====
 </script>
@@ -1019,6 +1040,7 @@ function viewSchedule() {
       <span style="flex:1"></span>
       <label><input type="checkbox" id="secondPass" ${state.settings.secondPass ? 'checked' : ''}> Double pass</label>
       <button class="btn primary" data-action="autofill">Auto-fill week</button>
+      <button class="btn" data-action="fillGaps" title="Only fill empty slots – nobody already on the schedule is moved">Fill gaps only</button>
       <button class="btn" data-action="sickForm">🤒 Report sickness</button>
       <button class="btn" data-action="clearUnlocked">Clear unlocked</button>
       <button class="btn danger" data-action="clearAll">Clear all</button>
@@ -1027,6 +1049,7 @@ function viewSchedule() {
       <button class="btn" data-action="print">Print</button>
     </div>
     <div class="legend">Choosing a carer by hand locks the slot (🔒) so auto-fill won't change it. Click the lock to unlock.
+      <b>Fill gaps only</b> fills empty slots without moving anyone.
       Auto-fill is shuffled each time, so press it again for a different version.
       ${errs ? `<b class="over">${errs} problem(s)</b>` : '<b class="met">No problems</b>'}${warns ? `, <b class="under">${warns} warning(s)</b>` : ''}</div>
     ${ui.sickForm ? sickFormView() : ''}
@@ -1448,6 +1471,12 @@ document.getElementById('app').addEventListener('click', e => {
   switch (a) {
     case 'prevWeek': ui.week = addDays(ui.week, -7); ui.report = null; break;
     case 'nextWeek': ui.week = addDays(ui.week, 7); ui.report = null; break;
+    case 'fillGaps': {
+      const r = fillGaps(state, ui.week);
+      const errs = r.issues.list.filter(i => i.level === 'error');
+      ui.report = r.log.join('\n') + (errs.length ? `\n\nStill needs attention (${errs.length}):\n` + errs.slice(0, 30).map(i => '• ' + i.msg).join('\n') : '\n\nAll runs covered.');
+      break;
+    }
     case 'autofill': {
       const r = autoFill(state, ui.week);
       const errs = r.issues.list.filter(i => i.level === 'error');

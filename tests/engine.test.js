@@ -350,6 +350,26 @@ test('sickness: carer is taken off their shifts and cover suggestions follow the
   assert(ok[0].notes.some(n => /short/.test(n)));
 });
 
+test('fill gaps only: empty slots are filled and nobody already placed is moved', () => {
+  for (let i = 0; i < 10; i++) {
+    const s = rosterState();
+    E.autoFill(s, WEEK, { random: seeded(900 + i) });
+    const week = E.getWeek(s, WEEK);
+    // empty a few slots, as if people were taken off by hand
+    const emptied = [[0, 1, 0], [3, 4, 0], [1, 6, 1], [2, 2, 1]];
+    for (const [r, d, k] of emptied) E.getCell(week, s.runs[r], d).slots[k] = { c: null, locked: false, override: false };
+    const before = JSON.stringify(s.runs.map(r => [0, 1, 2, 3, 4, 5, 6].map(d => E.getCell(week, r, d).slots.map(x => [x.c, x.locked]))));
+    const res = E.fillGaps(s, WEEK, { random: seeded(950 + i) });
+    check(s);
+    s.runs.forEach((r, ri) => [0, 1, 2, 3, 4, 5, 6].forEach(d => E.getCell(week, r, d).slots.forEach((x, k) => {
+      const was = JSON.parse(before)[ri][d][k];
+      if (was[0]) assert.deepStrictEqual([x.c, x.locked], was, `${r.id} day ${d} slot ${k} changed`);
+    })));
+    assert.strictEqual(res.filled, emptied.length, `filled ${res.filled}`);
+    assert(/Filled \d+ of 4 empty slot/.test(res.log[0]), res.log[0]);
+  }
+});
+
 function placementsOf(s, weeks) {
   const worked = {}, runs = {}; // worked[id] = flat day list; runs[id][weekIndex] = {runId: days}
   for (const c of s.carers) { worked[c.id] = []; runs[c.id] = []; }
