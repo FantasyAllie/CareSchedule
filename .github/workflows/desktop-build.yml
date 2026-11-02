@@ -38,6 +38,12 @@ jobs:
       - run: npm ci
       - name: Check the scheduling rules
         run: node ../tests/engine.test.js
+      - name: Use the release version for the app and file names
+        if: github.event_name == 'workflow_dispatch' && inputs.release != ''
+        shell: bash
+        env:
+          RELEASE: ${{ inputs.release }}
+        run: npm version "${RELEASE#v}" --no-git-tag-version --allow-same-version
       - name: Build
         run: npx electron-builder --publish never
         env:

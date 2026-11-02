@@ -1,7 +1,7 @@
 {
   "name": "careschedule",
   "productName": "CareSchedule",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Offline weekly scheduler for domiciliary care runs",
   "author": "FantasyAllie",
   "repository": {
