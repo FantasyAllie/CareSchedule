@@ -84,6 +84,19 @@ in the same browser, otherwise the browser treats it as a fresh copy.
 - **Finalise week** – once a week is done, **✔ Finalise week** switches off Auto-fill, Fill gaps only,
   clearing and editing for it, so it can't be changed by accident (the weekend and days-in-a-row rules rely
   on past weeks being right). Sickness cover still works on a finalised week. **Reopen week** undoes it.
+- **Day-off requests** – add one as a leave type ("Day-off request") on the Leave page or the carer's page. Unlike
+  leave it isn't a hard block: auto-fill avoids the day wherever cover allows, and if it can't, the day is flagged
+  amber ("asked for Wed off") and the auto-fill report says how many requests couldn't be met.
+- **Regular patterns** – on a carer's page, *Usually works* ticks the days they normally work, every week or every
+  other week (e.g. every other weekend). Auto-fill puts them on those days first; the safety rules still come first.
+- **What changed since shared** – sharing a PDF or printing a carer rota remembers what was sent. If the week then
+  changes, the Schedule says so ("2 changes for 2 carers"), lists each change, and *Share update* makes a PDF for just
+  the carers affected, with the changed days marked.
+- **Swap shifts** – *⇄ Swap*: pick a carer and one of their shifts, and who they're swapping with (the same day to swap
+  runs, another of their shifts to swap days, or nothing if they're just taking it). Every rule is checked for both
+  before anything changes; works on finalised weeks too.
+- **Find a carer** – type a name in *🔍 Find carer* to highlight all their shifts and see their next 4–8 weeks
+  (also by clicking a name in the carer summary).
 - **Share** – the **Share ▾** button on the Schedule has everything for getting the rota out:
   - **PDF for carers:** a designed **team rota** (landscape: colour-coded runs, who each carer is working with, an
     *Open shifts* box so staff can offer to pick them up) or **one page per carer** (their week day by day). Both
