@@ -230,6 +230,43 @@ test('carers who must not work together are never put on the same run', () => {
   assert(E.validate(s, WEEK).list.some(i => i.level === 'warn' && /H and W can't work together \(overridden\)/.test(i.msg)));
 });
 
+test('no overtime while someone else is short of their days, and short carers are flagged', () => {
+  const s = E.newState();
+  s.carers = [carer('A', 'F', true, 4, { overtime: true }), carer('B', 'F', true, 4, { overtime: true })];
+  s.runs = [run('S', 'single')];
+  for (let i = 0; i < 20; i++) {
+    const v = E.autoFill(s, WEEK, { random: seeded(i) }).issues;
+    assert(v.carers.A.count <= 4 && v.carers.B.count <= 4, `overtime given: A ${v.carers.A.count}, B ${v.carers.B.count}`);
+  }
+  // A is due 5 days but the only run operates Mon-Wed; C is marked unavailable all week
+  const s2 = E.newState();
+  s2.carers = [carer('A', 'F', true, 5), carer('C', 'F', true, 5, { available: [false, false, false, false, false, false, false] })];
+  s2.runs = [Object.assign(run('S', 'single'), { days: [true, true, true, false, false, false, false] })];
+  E.autoFill(s2, WEEK, { random: seeded(1) });
+  const msgs = E.validate(s2, WEEK).list.map(i => i.msg).join('\n');
+  assert(/A: 4 days off – profile allows 2 \(2 day\(s\) short\)/.test(msgs), msgs);
+  assert(!/C: .*days off/.test(msgs), 'C is marked unavailable, so days off are expected');
+});
+
+test('weekends are staggered so a short-staffed roster never loses a whole weekend', () => {
+  let worst = 0;
+  for (let k = 0; k < 4; k++) {
+  const s = rosterState();
+  s.carers = s.carers.filter(c => !['M5', 'F7', 'F10', 'F11', 'F12'].includes(c.id));
+  s.runs = s.runs.filter(r => r.id !== 'R6');
+  for (let i = 0; i < 9; i++) {
+    const w = E.addDays(WEEK, 7 * i);
+    E.autoFill(s, w, { random: seeded(300 + 50 * k + i) });
+    const week = E.getWeek(s, w);
+    let empty = 0;
+    for (const r of s.runs) for (const d of [5, 6]) empty += E.getCell(week, r, d).slots.filter(x => !x.c).length;
+    worst = Math.max(worst, empty);
+  }
+  }
+  console.log(`     (worst weekend: ${worst} of 18 weekend shifts unfilled)`);
+  assert(worst <= 8, `${worst} weekend shifts unfilled in one week`);
+});
+
 function placementsOf(s, weeks) {
   const worked = {}, runs = {}; // worked[id] = flat day list; runs[id][weekIndex] = {runId: days}
   for (const c of s.carers) { worked[c.id] = []; runs[c.id] = []; }

@@ -67,6 +67,14 @@ Auto-fill reads the previous 13 weeks of schedules saved in the app (fill weeks 
 - **2 days off after 6+ in a row** – if a carer ends up working 6 or 7 days in a row for any reason (added by
   hand, or the limit above raised), auto-fill keeps the next 2 days off for them, including into next week.
   Putting them back on sooner is flagged red.
+- **No more days off than the profile allows** – each carer should work their days per week, less any days
+  marked unavailable, on leave or sick. Overtime days are only used when no one else can cover the shift; a
+  final step hands overtime shifts back to anyone still short, and shifts are swapped around so a carer who
+  is short can take over from someone who can cover a gap instead. Anyone still short is shown as a warning
+  ("4 days off – profile allows 2"), and the auto-fill report says whether that is because there are more
+  contracted days than shifts that week.
+- **Weekends are staggered** – only as many people who worked last weekend work this one as still leaves
+  enough people for next weekend, so the weekend-off rule never empties a whole weekend at once.
 - **Days off together** – avoids leaving a single day off sandwiched between working days.
 - **Random, not alphabetical** – runs and carers are shuffled each time, so pressing Auto-fill again gives
   a different version.

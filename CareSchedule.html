@@ -417,8 +417,16 @@ function autoFill(state, weekStart, opts) {
   // every hard rule except the days-in-a-row limit and days per week, which callers check
   const carerById = Object.fromEntries(state.carers.map(c => [c.id, c]));
   const clashes = (c, cell) => cellCarers(cell).some(id => carerById[id] && cantPair(c, carerById[id]));
+  // Stagger weekends: every carer who works this weekend after working last weekend must have next weekend off,
+  // so only let as many of them work as still leaves enough people to cover next weekend.
+  const weekendSlots = Math.max(...[5, 6].map(d => state.runs.filter(r => r.days[d]).reduce((n, r) => n + slotCount(r), 0)));
+  const weekendPool = carers.filter(c => c.available[5] || c.available[6]).length;
+  const secondWeekendQuota = Math.max(0, weekendPool - weekendSlots);
+  const secondWeekend = new Set(carers.filter(c => streak[c.id] === 1 && (booked[5].has(c.id) || booked[6].has(c.id))).map(c => c.id));
+  const overQuota = (c, d) => d >= 5 && opts.weekendRule !== false && streak[c.id] === 1 &&
+    !secondWeekend.has(c.id) && secondWeekend.size >= secondWeekendQuota;
   const allowedHere = (c, run, d, rule, passNo, cell) =>
-    !clashes(c, cell) && genderOk(run, c) && runTypeOk(run, c) && allowedOk(run, c) && ok(c, d) && !booked[d].has(c.id) &&
+    !clashes(c, cell) && !overQuota(c, d) && genderOk(run, c) && runTypeOk(run, c) && allowedOk(run, c) && ok(c, d) && !booked[d].has(c.id) &&
     !weekendBlocked(c, d) &&
     !(reserved.has(c.id) && !isSpecific(run) && (passNo === 1 || d >= 5)) &&
     (!rule.needDriver || c.driver) &&
@@ -432,6 +440,7 @@ function autoFill(state, weekStart, opts) {
     worked[c.id].add(d);
     runCount[c.id][run.id] = (runCount[c.id][run.id] || 0) + 1;
     dayRun[c.id][d] = run.id;
+    if (d >= 5 && streak[c.id] === 1) secondWeekend.add(c.id);
   };
   const unplace = (c, run, d, cell, idx) => {
     cell.slots[idx].c = null;
@@ -440,7 +449,13 @@ function autoFill(state, weekStart, opts) {
     runCount[c.id][run.id]--;
     if (!runCount[c.id][run.id]) delete runCount[c.id][run.id];
     delete dayRun[c.id][d];
+    if (d >= 5 && !booked[5].has(c.id) && !booked[6].has(c.id)) secondWeekend.delete(c.id);
   };
+
+  // days a carer should work this week: their days per week, less days marked unavailable / leave / sickness
+  const target = c => Math.min(Number(c.daysPerWeek || 0), DAYS.filter((_, d) => ok(c, d)).length);
+  const overtime = c => worked[c.id].size >= Number(c.daysPerWeek || 0) ? 1 : 0;
+  const short = c => worked[c.id].size < target(c) ? 0 : 1;
 
   function pick(run, d, cell, idx, rule, cap, passNo) {
     const cands = carers.filter(c => eligible(c, run, d, rule, cap, passNo, cell));
@@ -470,7 +485,8 @@ function autoFill(state, weekStart, opts) {
     const scores = new Map(cands.map(c => [c, score(c)]));
     cands.sort((a, b) => {
       const sa = scores.get(a), sb = scores.get(b);
-      return (sa.urgent - sb.urgent) ||                    // must work every remaining day to hit contract
+      return (overtime(a) - overtime(b)) ||                // an overtime day only when no one else can do it
+        (sa.urgent - sb.urgent) ||                         // must work every remaining day to hit contract
         (!rule.needDriver ? (a.driver - b.driver) : 0) ||  // keep drivers free where a driver isn't needed
         (sb.soft - sa.soft);                               // weighted preferences (see WEIGHTS)
     });
@@ -478,12 +494,12 @@ function autoFill(state, weekStart, opts) {
     return true;
   }
 
-  // Fill a gap that is only blocked by the days-in-a-row limit: hand one of carer c's other shifts in that
-  // stretch to someone else, then put c in the gap.
+  // Fill a gap that carer c could cover except for the days-in-a-row / rest rules or having used up their days:
+  // hand one of c's other shifts to someone else (a carer short of their days first), then put c in the gap.
   function swapIntoGap(run, d, cell, idx, cap) {
     const rule = { needDriver: needsDriver(run) && !hasDriver(cell) };
-    const blocked = shuffle(carers.filter(c => tooManyInARow(c, d) && allowedHere(c, run, d, rule, 2, cell) &&
-      worked[c.id].size <= cap(c)), rng);
+    const blocked = shuffle(carers.filter(c => allowedHere(c, run, d, rule, 2, cell) &&
+      !eligible(c, run, d, rule, cap, 2, cell) && worked[c.id].size <= cap(c)), rng);
     for (const c of blocked) {
       for (const e of shuffle([...worked[c.id]], rng)) {
         const spot = state.runs.filter(r => r.days[e]).map(r => ({ r, cell: getCell(week, r, e) }))
@@ -493,7 +509,8 @@ function autoFill(state, weekStart, opts) {
         unplace(c, spot.r, e, spot.cell, spot.i);
         if (!tooManyInARow(c, d) && !breaksRest(c, d) && worked[c.id].size < cap(c)) {
           const ruleE = { needDriver: needsDriver(spot.r) && !hasDriver(spot.cell) };
-          const y = shuffle(carers.filter(y => y !== c && eligible(y, spot.r, e, ruleE, cap, 2, spot.cell)), rng)[0];
+          const y = shuffle(carers.filter(y => y !== c && eligible(y, spot.r, e, ruleE, cap, 2, spot.cell)), rng)
+            .sort((a, b) => short(a) - short(b) || overtime(a) - overtime(b))[0];
           if (y) {
             place(y, spot.r, e, spot.cell, spot.i);
             place(c, run, d, cell, idx);
@@ -506,8 +523,29 @@ function autoFill(state, weekStart, opts) {
     return false;
   }
 
+  // A carer short of their days takes a shift from someone on an overtime day.
+  function topUp() {
+    let moved = 0;
+    const contractCap = c => capacity(c, false);
+    for (const a of shuffle(carers.filter(c => short(c) === 0), rng)) {
+      for (const d of shuffle([0, 1, 2, 3, 4, 5, 6], rng)) {
+        if (short(a) || booked[d].has(a.id) || !ok(a, d)) continue;
+        const spots = state.runs.filter(r => r.days[d]).flatMap(r => {
+          const cell = getCell(week, r, d);
+          return cell.slots.map((sl, i) => ({ r, cell, i, b: carerById[sl.c], locked: sl.locked }));
+        }).filter(x => x.b && !x.locked && worked[x.b.id].size > Number(x.b.daysPerWeek || 0));
+        for (const x of spots) {
+          unplace(x.b, x.r, d, x.cell, x.i);
+          const rule = { needDriver: needsDriver(x.r) && !hasDriver(x.cell) };
+          if (eligible(a, x.r, d, rule, contractCap, 2, x.cell)) { place(a, x.r, d, x.cell, x.i); moved++; break; }
+          place(x.b, x.r, d, x.cell, x.i);
+        }
+      }
+    }
+    return moved;
+  }
+
   function repairGaps() {
-    if (!maxInARow) return 0;
     const cap = c => capacity(c, opts.secondPass && opts.useOvertime);
     let fixed = 0;
     for (const d of DAY_ORDER) {
@@ -575,7 +613,17 @@ function autoFill(state, weekStart, opts) {
     log.push(`Pass 2: filled ${f2} more slot(s) using spare carers${opts.useOvertime ? ' and agreed overtime' : ''}.`);
   }
   const f3 = repairGaps();
-  if (f3) log.push(`Swapped shifts to fill ${f3} more slot(s) without going over ${maxInARow} days in a row.`);
+  if (f3) log.push(`Swapped shifts around to fill ${f3} more slot(s).`);
+  const f4 = topUp();
+  if (f4) log.push(`Moved ${f4} overtime shift(s) to carers who were short of their days.`);
+  const shiftCount = state.runs.reduce((n, r) => n + r.days.filter(Boolean).length * slotCount(r), 0);
+  const wanted = carers.reduce((n, c) => n + target(c), 0);
+  const shortBy = carers.reduce((n, c) => n + Math.max(0, target(c) - worked[c.id].size), 0);
+  if (shortBy) {
+    log.push(`${shortBy} day(s) short of carers' profiles this week.` + (wanted > shiftCount
+      ? ` There are ${shiftCount} shifts but carers are due ${wanted} days, so ${wanted - shiftCount} extra day(s) off can't be avoided.`
+      : ' The weekend-off, days-in-a-row and other rules stopped those shifts being given out.'));
+  }
   return { log, issues: validate(state, weekStart) };
 }
 
@@ -659,6 +707,12 @@ function validate(state, weekStart) {
         if (b.back < 0 || b.back > 6) continue; // reported in the week they go back to work
         list.push({ level: 'error', msg: `${c.name}: back on ${DAYS[b.back]} after ${b.length} days in a row – needs ${REST_DAYS} days off in a row first` });
       }
+    }
+    const avail = DAYS.filter((_, d) => carerStatus(c, weekStart, d).ok).length;
+    const want = Math.min(Number(c.daysPerWeek || 0), avail);
+    carers[c.id].want = want;
+    if (c.active !== false && n < want) {
+      list.push({ level: 'warn', msg: `${c.name}: ${7 - n} days off – profile allows ${7 - want} (${want - n} day(s) short)` });
     }
     if (n > capacity(c, true)) list.push({ level: 'error', msg: `${c.name}: ${n} days booked, maximum is ${capacity(c, true)}` });
     else if (n > capacity(c, false)) list.push({ level: 'warn', msg: `${c.name}: working an overtime day (${n} days)` });
