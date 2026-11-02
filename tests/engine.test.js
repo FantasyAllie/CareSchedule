@@ -31,6 +31,7 @@ function check(state) {
         const c = byId[id];
         assert(r.gender === 'any' || r.gender === c.gender, `gender rule broken on ${r.id}`);
         assert(!c.runTypes || c.runTypes === 'both' || c.runTypes === (r.type === 'double' ? 'double' : 'single'), `${id} on wrong run type ${r.id}`);
+        assert(!c.onlyPreferred || (c.preferredRuns || []).includes(r.id), `${id} put on ${r.id} but only works ${c.preferredRuns}`);
         for (const other of ids) if (other !== id) assert(!E.cantPair(c, byId[other]), `${id} and ${other} on ${r.id} together`);
         assert(!(r.allowed && r.allowed.length) || r.allowed.includes(id), `${id} not allowed on ${r.id}`);
         assert(E.carerStatus(c, WEEK, d).ok, `${id} assigned while unavailable on day ${d}`);
@@ -265,6 +266,32 @@ test('weekends are staggered so a short-staffed roster never loses a whole weeke
   }
   console.log(`     (worst weekend: ${worst} of 18 weekend shifts unfilled)`);
   assert(worst <= 8, `${worst} weekend shifts unfilled in one week`);
+});
+
+test('preferred runs: "only these runs" is never broken, a preference is mostly kept', () => {
+  const s = E.newState();
+  s.carers = [carer('O', 'F', true, 5, { preferredRuns: ['R1'], onlyPreferred: true }), carer('P', 'F', true, 5, { preferredRuns: ['R2'] }),
+    carer('A', 'F', true, 5), carer('B', 'F', true, 3), carer('C', 'F', true, 3)];
+  s.runs = [run('R1', 'single'), run('R2', 'single'), run('R3', 'single')];
+  let pDays = 0, pOnR2 = 0, oDays = 0;
+  for (let i = 0; i < 8; i++) {
+    const w = E.addDays(WEEK, 7 * i);
+    const v = E.autoFill(s, w, { random: seeded(500 + i) }).issues;
+    check(s);
+    oDays += v.carers.O.count;
+    for (let d = 0; d < 7; d++) {
+      const onR2 = E.getCell(E.getWeek(s, w), s.runs[1], d).slots[0].c === 'P';
+      if (v.carers.P.days[d]) { pDays++; if (onR2) pOnR2++; }
+    }
+  }
+  console.log(`     (O worked ${oDays} of 40 contracted days, all on R1; P was on their preferred run ${pOnR2} of ${pDays} days)`);
+  assert(oDays >= 34, `O only got ${oDays} of 40 days`);
+  assert(pOnR2 / pDays >= 0.9, 'preferred run not kept');
+  const cell = E.getCell(E.getWeek(s, WEEK), s.runs[2], 0);
+  cell.slots[0] = { c: 'O', locked: true, override: false };
+  assert(E.validate(s, WEEK).list.some(i => i.level === 'error' && /O: only works R1/.test(i.msg)));
+  cell.slots[0].override = true;
+  assert(E.validate(s, WEEK).list.some(i => i.level === 'warn' && /O: only works R1 \(overridden\)/.test(i.msg)));
 });
 
 function placementsOf(s, weeks) {

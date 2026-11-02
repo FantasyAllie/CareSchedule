@@ -16,7 +16,8 @@ in the same browser, otherwise the browser treats it as a fresh copy.
 ## Features
 
 - **Carers** – add, edit, remove (or mark inactive). Each has gender, driver / non-driver, days per week,
-  an agreed +1 overtime day, whether they can go on double-ups, singles or both, which weekdays they can work, dated annual leave / sickness, and a **Can't work with** list (e.g. a married couple) – they are never put
+  an agreed +1 overtime day, whether they can go on double-ups, singles or both, which weekdays they can work, dated annual leave / sickness, **Preferred runs** (tick **Only these runs** for a carer who
+  only ever does a specific run), and a **Can't work with** list (e.g. a married couple) – they are never put
   on the same run on the same day. It applies both ways, so it only needs setting on one of them.
   The carers list shows whether each person is due a weekend off, and flags anyone who has worked 2 weekends
   in a row as **⚑ Weekend off priority**.
@@ -57,6 +58,9 @@ Auto-fill reads the previous 13 weeks of schedules saved in the app (fill weeks 
   hand is flagged red. The flag comes only from what people have actually worked, so nobody is favoured
   by hand. People working a weekend
   are given both days where possible, so others get whole weekends off.
+- **Preferred runs** – carers are put on their preferred runs first, ahead of the run-pair rotation below,
+  and a final step swaps same-day shifts to move them onto them. A carer set to **Only these runs** is never
+  put on any other run (doing it by hand asks for confirmation and is flagged).
 - **Same 2 runs for 3 weeks** – carers are kept on their current pair of runs (e.g. Mon–Wed on Run 2, a day
   off, then Fri–Sat on Run 4) for 3 weeks, then moved to a different pair. Within a week it avoids a 3rd
   different run and keeps runs in blocks of days.

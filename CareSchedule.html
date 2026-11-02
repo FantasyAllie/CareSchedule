@@ -138,6 +138,10 @@ function carerStatus(carer, weekStart, d) {
   return { ok: true };
 }
 
+function preferredNames(carer, runs) {
+  return (carer.preferredRuns || []).map(id => runs.find(r => r.id === id)).filter(Boolean).map(r => r.name).join(', ');
+}
+
 function genderOk(run, carer) { return run.gender === 'any' || run.gender === carer.gender; }
 
 // carer.runTypes: 'both' (default), 'double' (double-ups only) or 'single' (singles only)
@@ -149,6 +153,10 @@ function runTypeOk(run, carer) {
 function cantPair(a, b) {
   return a.id !== b.id && ((a.notWith || []).includes(b.id) || (b.notWith || []).includes(a.id));
 }
+
+// carer.preferredRuns: run ids they prefer; with carer.onlyPreferred they are never put on any other run
+function prefersRun(carer, run) { return (carer.preferredRuns || []).includes(run.id); }
+function preferredOk(run, carer) { return !carer.onlyPreferred || !(carer.preferredRuns || []).length || prefersRun(carer, run); }
 
 function runTypesLabel(carer) {
   const t = carer.runTypes || 'both';
@@ -307,6 +315,7 @@ const WEIGHTS = {
   sameRunAsYesterday: 1.5, // same run as the day before/after – keeps runs in blocks of days
   weekRuns: 1.5,        // a run they already have this week
   thirdRun: 2.5,        // would be a 3rd different run this week
+  preferredRun: 4,      // one of the carer's preferred runs (also exempt from the run-pair rotation)
   keepRotation: 2,      // on their current pair of runs, within ROTATION_WEEKS
   swapRotation: 3,      // done ROTATION_WEEKS on the same pair – move them on
   random: 2,            // shuffle so allocation is random, not by name or list order
@@ -426,7 +435,7 @@ function autoFill(state, weekStart, opts) {
   const overQuota = (c, d) => d >= 5 && opts.weekendRule !== false && streak[c.id] === 1 &&
     !secondWeekend.has(c.id) && secondWeekend.size >= secondWeekendQuota;
   const allowedHere = (c, run, d, rule, passNo, cell) =>
-    !clashes(c, cell) && !overQuota(c, d) && genderOk(run, c) && runTypeOk(run, c) && allowedOk(run, c) && ok(c, d) && !booked[d].has(c.id) &&
+    !clashes(c, cell) && !overQuota(c, d) && genderOk(run, c) && runTypeOk(run, c) && preferredOk(run, c) && allowedOk(run, c) && ok(c, d) && !booked[d].has(c.id) &&
     !weekendBlocked(c, d) &&
     !(reserved.has(c.id) && !isSpecific(run) && (passNo === 1 || d >= 5)) &&
     (!rule.needDriver || c.driver) &&
@@ -474,7 +483,11 @@ function autoFill(state, weekStart, opts) {
       if (thisWeek.includes(run.id)) soft += WEIGHTS.weekRuns;
       else if (thisWeek.length >= 2) soft -= WEIGHTS.thirdRun;
       const r = rot[c.id];
-      if (r.runs.length) {
+      if (prefersRun(c, run)) soft += WEIGHTS.preferredRun;
+      else if (state.runs.some(p => p.days[d] && prefersRun(c, p) && getCell(week, p, d).slots.some(sl => !sl.c))) {
+        soft -= WEIGHTS.preferredRun; // their preferred run still has a space today
+      }
+      else if (r.runs.length) {
         const onPair = r.runs.includes(run.id);
         if (r.streak < ROTATION_WEEKS) soft += onPair ? WEIGHTS.keepRotation : -WEIGHTS.keepRotation / 2;
         else soft += onPair ? -WEIGHTS.swapRotation : WEIGHTS.swapRotation / 2;
@@ -543,6 +556,47 @@ function autoFill(state, weekStart, opts) {
       }
     }
     return moved;
+  }
+
+  // Same-day swaps that move carers onto their preferred runs: c (on another run) swaps with q (on c's preferred run).
+  function preferenceSwaps() {
+    let swapped = 0;
+    const cap = c => capacity(c, true);
+    const spotOf = (c, d) => {
+      for (const r of state.runs) {
+        if (!r.days[d]) continue;
+        const cell = getCell(week, r, d);
+        const i = cell.slots.findIndex(sl => sl.c === c.id && !sl.locked);
+        if (i >= 0) return { r, cell, i };
+      }
+      return null;
+    };
+    for (const c of shuffle(carers.filter(c => (c.preferredRuns || []).length), rng)) {
+      for (let d = 0; d < 7; d++) {
+        const from = spotOf(c, d);
+        if (!from || prefersRun(c, from.r)) continue;
+        const targets = state.runs.filter(p => p.days[d] && prefersRun(c, p)).flatMap(p => {
+          const cell = getCell(week, p, d);
+          return cell.slots.map((sl, i) => ({ r: p, cell, i, q: carerById[sl.c], locked: sl.locked }));
+        }).filter(x => x.q && !x.locked && x.q !== c && !prefersRun(x.q, x.r));
+        for (const to of targets) {
+          unplace(c, from.r, d, from.cell, from.i);
+          unplace(to.q, to.r, d, to.cell, to.i);
+          const ruleTo = { needDriver: needsDriver(to.r) && !hasDriver(to.cell) };
+          let ok = eligible(c, to.r, d, ruleTo, cap, 2, to.cell);
+          if (ok) {
+            place(c, to.r, d, to.cell, to.i);
+            const ruleFrom = { needDriver: needsDriver(from.r) && !hasDriver(from.cell) };
+            ok = eligible(to.q, from.r, d, ruleFrom, cap, 2, from.cell);
+            if (ok) { place(to.q, from.r, d, from.cell, from.i); swapped++; break; }
+            unplace(c, to.r, d, to.cell, to.i);
+          }
+          place(c, from.r, d, from.cell, from.i);
+          place(to.q, to.r, d, to.cell, to.i);
+        }
+      }
+    }
+    return swapped;
   }
 
   function repairGaps() {
@@ -616,6 +670,8 @@ function autoFill(state, weekStart, opts) {
   if (f3) log.push(`Swapped shifts around to fill ${f3} more slot(s).`);
   const f4 = topUp();
   if (f4) log.push(`Moved ${f4} overtime shift(s) to carers who were short of their days.`);
+  const f5 = preferenceSwaps();
+  if (f5) log.push(`Swapped ${f5} shift(s) on the same day to put carers on their preferred runs.`);
   const shiftCount = state.runs.reduce((n, r) => n + r.days.filter(Boolean).length * slotCount(r), 0);
   const wanted = carers.reduce((n, c) => n + target(c), 0);
   const shortBy = carers.reduce((n, c) => n + Math.max(0, target(c) - worked[c.id].size), 0);
@@ -672,6 +728,7 @@ function validate(state, weekStart) {
         const c = byId[s.c];
         if (!c) { add(run.id, d, 'error', 'Unknown carer'); continue; }
         if (!genderOk(run, c)) add(run.id, d, 'error', `${c.name}${role}: run is ${run.gender === 'M' ? 'male' : 'female'} only`);
+        if (!role && !preferredOk(run, c)) add(run.id, d, s.override ? 'warn' : 'error', `${c.name}: only works ${preferredNames(c, state.runs)}${s.override ? ' (overridden)' : ''}`);
         if (!role && !runTypeOk(run, c)) add(run.id, d, s.override ? 'warn' : 'error', `${c.name}: ${runTypesLabel(c).toLowerCase()}${s.override ? ' (overridden)' : ''}`);
         if (!role && !allowedOk(run, c)) add(run.id, d, s.override ? 'warn' : 'error', `${c.name}: not on this run's carer list${s.override ? ' (overridden)' : ''}`);
         const st = carerStatus(c, weekStart, d);
@@ -721,7 +778,7 @@ function validate(state, weekStart) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { cantPair, DAYS, HISTORY_WEEKS, weekDays, longestStretch, restBreaches, ROTATION_WEEKS, history, weekendStreak, rotation, uid, addDays, mondayOf, newState, getWeek, getCell, carerStatus, capacity, autoFill, validate, clearUnlocked };
+  module.exports = { prefersRun, cantPair, DAYS, HISTORY_WEEKS, weekDays, longestStretch, restBreaches, ROTATION_WEEKS, history, weekendStreak, rotation, uid, addDays, mondayOf, newState, getWeek, getCell, carerStatus, capacity, autoFill, validate, clearUnlocked };
 }
 // ===== ENGINE END =====
 </script>
@@ -866,6 +923,8 @@ function carerSelect(run, d, selected, attrs, placeholder) {
     if (!genderOk(run, c)) notes.push('gender');
     if (!allowedOk(run, c)) notes.push('not on run list');
     if (!runTypeOk(run, c)) notes.push(c.runTypes === 'double' ? 'doubles only' : 'singles only');
+    if (!preferredOk(run, c)) notes.push(`only ${preferredNames(c, state.runs)}`);
+    else if (prefersRun(c, run)) notes.push('preferred');
     if (bookedElsewhere.has(c.id)) notes.push('booked');
     const label = `${c.name} (${c.gender}${c.driver ? ', D' : ''})${notes.length ? ' – ' + notes.join(', ') : ''}`;
     return `<option value="${c.id}" ${c.id === selected ? 'selected' : ''}>${esc(label)}</option>`;
@@ -908,6 +967,10 @@ function assign(runId, d, slot, carerId) {
   const clash = others.find(o => cantPair(c, o));
   if (clash) {
     if (!confirm(`${c.name} and ${clash.name} are set to not work together. Put them on ${run.name} together anyway?`)) return false;
+    override = true;
+  }
+  if (slot !== 'shadow' && !preferredOk(run, c)) {
+    if (!confirm(`${c.name} only works ${preferredNames(c, state.runs)}. Put them on ${run.name} anyway?`)) return false;
     override = true;
   }
   if (slot !== 'shadow' && !runTypeOk(run, c)) {
@@ -974,7 +1037,7 @@ function viewCarers() {
       <td><span class="tag ${c.gender}">${c.gender === 'M' ? 'Male' : 'Female'}</span></td>
       <td><span class="tag ${c.driver ? 'drv' : 'nodrv'}">${c.driver ? 'Driver' : 'Non-driver'}</span></td>
       <td>${c.daysPerWeek}${c.overtime ? ' + 1 overtime' : ''}</td>
-      <td>${runTypesLabel(c)}</td>
+      <td>${runTypesLabel(c)}${(c.preferredRuns || []).length ? `<br><span class="muted">${c.onlyPreferred ? 'Only' : 'Prefers'}: ${esc(preferredNames(c, state.runs))}</span>` : ''}</td>
       <td>${DAYS.filter((_, i) => c.available[i]).join(', ') || 'none'}</td>
       <td>${current || '<span class="muted">none</span>'}</td>
       <td>${weekendBadge(weekendStreak(hist[c.id]))}</td>
@@ -1019,6 +1082,12 @@ function carerForm(c) {
         <option value="single" ${c.runTypes === 'single' ? 'selected' : ''}>Singles only</option></select></label>
       <label><input type="checkbox" data-f="active" ${c.active !== false ? 'checked' : ''}> Active</label>
     </div>
+    <div class="row" style="align-items:flex-start"><b>Preferred runs:</b>
+      <details><summary>${esc(preferredNames(c, state.runs) || 'None – choose…')}</summary>
+        ${state.runs.map(r => `<label style="display:block"><input type="checkbox" data-f="preferredRuns" data-r="${r.id}" ${(c.preferredRuns || []).includes(r.id) ? 'checked' : ''}> ${esc(r.name)}</label>`).join('')}
+      </details>
+      <label><input type="checkbox" data-f="onlyPreferred" ${c.onlyPreferred ? 'checked' : ''}> Only these runs</label>
+      <span class="muted">auto-fill puts them on their preferred runs first; tick "Only these runs" to never use them anywhere else</span></div>
     <div class="row days"><b>Days they can work:</b> ${DAYS.map((d, i) => `<label><input type="checkbox" data-f="avail" data-i="${i}" ${c.available[i] ? 'checked' : ''}>${d}</label>`).join('')}</div>
     <div class="row" style="align-items:flex-start"><b>Can't work with:</b>
       <details><summary>${esc(sortedCarers().filter(o => o.id !== c.id && (c.notWith || []).includes(o.id)).map(o => o.name).join(', ') || 'No one – choose…')}</summary>
@@ -1047,6 +1116,8 @@ function readCarerForm() {
   c.daysPerWeek = Math.max(0, Math.min(7, Number(val('daysPerWeek').value) || 0));
   c.overtime = val('overtime').checked;
   c.runTypes = val('runTypes').value;
+  c.preferredRuns = [...f.querySelectorAll('[data-f="preferredRuns"]:checked')].map(x => x.dataset.r);
+  c.onlyPreferred = val('onlyPreferred').checked;
   c.active = val('active').checked;
   c.notes = val('notes').value;
   c.notWith = [...f.querySelectorAll('[data-f="notWith"]:checked')].map(x => x.dataset.c);
@@ -1157,6 +1228,7 @@ function sampleData() {
     { id: uid(), name: 'Run 5', type: 'single', gender: 'F', days: all.slice() },
     { id: uid(), name: 'Run 6', type: 'single', gender: 'any', days: all.slice(), needsDriver: false, allowed: named },
   ];
+  Object.assign(s.carers.find(c => c.name === 'Isla Reed'), { preferredRuns: [s.runs[3].id], onlyPreferred: true });
   return s;
 }
 
@@ -1234,6 +1306,7 @@ document.getElementById('app').addEventListener('click', e => {
       if (!confirm(`Remove ${r.name}? Its assignments will be deleted.`)) return;
       state.runs = state.runs.filter(x => x.id !== r.id);
       for (const w of Object.values(state.weeks)) delete w.cells[r.id];
+      for (const c of state.carers) if (c.preferredRuns) c.preferredRuns = c.preferredRuns.filter(id => id !== r.id);
       break;
     }
     case 'runUp': case 'runDown': {
