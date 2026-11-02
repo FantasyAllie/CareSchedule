@@ -370,6 +370,61 @@ test('fill gaps only: empty slots are filled and nobody already placed is moved'
   }
 });
 
+test('a finalised week is never changed by auto-fill or fill gaps', () => {
+  const s = rosterState();
+  E.autoFill(s, WEEK, { random: seeded(1) });
+  const week = E.getWeek(s, WEEK);
+  E.getCell(week, s.runs[0], 0).slots[0] = { c: null, locked: false, override: false };
+  week.final = true;
+  const before = JSON.stringify(week);
+  assert(E.autoFill(s, WEEK, { random: seeded(2) }).finalised);
+  assert.strictEqual(E.fillGaps(s, WEEK, { random: seeded(3) }).filled, 0);
+  assert.strictEqual(JSON.stringify(week), before);
+});
+
+test('carer spreadsheet: import adds, updates, skips examples and explains bad rows; export round-trips', () => {
+  const s = E.newState();
+  s.runs = [run('R1', 'double'), Object.assign(run('R2', 'single'), { name: 'Run 2' })];
+  s.carers = [carer('A', 'F', true, 5, { name: 'Amy Old' })];
+  const H = E.CARER_COLUMNS.map(c => c.head);
+  const rows = [H,
+    ['Example: Jane Smith', 'F', 'Yes', 5, 'No', 'Both', 'All', 'No', '', 'No', '', ''],
+    ['amy old', '', 'No', 4, '', 'Doubles', 'Mon-Thu', '', 'Run 2; Run 9', 'Yes', 'Bob New', 'updated'],
+    ['Bob New', 'Male', 'yes', '5', 'Y', '', 'Sat Sun Mon', 'no', '', '', '', ''],
+    ['Bad Gender', 'X', 'Yes', 5, '', '', '', '', '', '', '', ''],
+    ['Bad Days', 'F', 'Yes', 9, '', '', 'Funday', '', '', '', '', ''],
+    ['No Gender', '', 'Yes', 5, '', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', '', '', '', '', ''],
+  ];
+  const plan = E.planCarerImport(s, rows);
+  assert.strictEqual(plan.skipped, 1);
+  assert.strictEqual(plan.add.map(c => c.name).join(), 'Bob New');
+  assert.strictEqual(plan.update.map(u => u.name).join(), 'Amy Old');
+  assert(/driver.*days per week.*can go on/.test(plan.update[0].labels.join()), plan.update[0].labels.join());
+  assert.strictEqual(plan.errors.length, 3, plan.errors.join('\n'));
+  assert(/Row 5 \(Bad Gender\): Gender must be M or F/.test(plan.errors[0]));
+  assert(/Row 6 \(Bad Days\): Days per week must be a whole number 0–7.*Days they can work not understood/.test(plan.errors[1]), plan.errors[1]);
+  assert(/Row 7 \(No Gender\): Gender is needed/.test(plan.errors[2]));
+  assert(plan.warnings.some(w => /Row 3: no run called "Run 9"/.test(w)), plan.warnings.join('\n'));
+  E.applyCarerImport(s, plan);
+  const amy = s.carers.find(c => c.id === 'A'), bob = s.carers.find(c => c.name === 'Bob New');
+  assert.strictEqual(amy.gender, 'F', 'blank cell keeps the current value');
+  assert(!amy.driver && amy.daysPerWeek === 4 && amy.runTypes === 'double' && amy.onlyPreferred && amy.notes === 'updated');
+  assert.strictEqual(amy.available.join(), [true, true, true, true, false, false, false].join());
+  assert.strictEqual(amy.preferredRuns.join(), 'R2');
+  assert(bob.gender === 'M' && bob.driver && bob.overtime && !bob.agency);
+  assert.strictEqual(bob.available.join(), [true, false, false, false, false, true, true].join());
+  assert(E.cantPair(amy, bob) && E.cantPair(bob, amy), "can't work with applies both ways");
+  // export then re-import: only updates, and nothing changes
+  const snapshot = JSON.stringify(E.carersToRows(s));
+  const again = E.planCarerImport(s, E.carersToRows(s));
+  assert.strictEqual(again.add.length + again.update.length + again.errors.length + again.warnings.length, 0, JSON.stringify(again));
+  assert.strictEqual(again.unchanged, 2);
+  E.applyCarerImport(s, again);
+  assert.strictEqual(s.carers.length, 2);
+  assert.strictEqual(JSON.stringify(E.carersToRows(s)), snapshot);
+});
+
 function placementsOf(s, weeks) {
   const worked = {}, runs = {}; // worked[id] = flat day list; runs[id][weekIndex] = {runId: days}
   for (const c of s.carers) { worked[c.id] = []; runs[c.id] = []; }

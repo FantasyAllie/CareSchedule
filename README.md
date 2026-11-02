@@ -59,6 +59,19 @@ in the same browser, otherwise the browser treats it as a fresh copy.
 - **Schedule** – Monday to Sunday grid. Pick carers by hand (the slot is then 🔒 locked and auto-fill
   leaves it alone), add a 3rd shadow / training carer, copy the previous week, print, export CSV.
   Problems are highlighted in red (e.g. no driver, double booked, on leave) and amber (overrides, overtime).
+- **Finalise week** – once a week is done, **✔ Finalise week** switches off Auto-fill, Fill gaps only,
+  clearing and editing for it, so it can't be changed by accident (the weekend and days-in-a-row rules rely
+  on past weeks being right). Sickness cover still works on a finalised week. **Reopen week** undoes it.
+- **Printing** – choose what to print next to the Print button: the **run rota** (runs × days), a **carer rota**
+  for the wall (carers × days, with their run and who they're working with), or **a sheet for each carer**
+  (one page each, listing their week).
+- **Undo** – the **↶ Undo** button (top right) or Ctrl+Z / ⌘Z steps back through the last 30 changes,
+  including auto-fills and imports.
+- **Import carers from Excel** – on the Carers page, **Download Excel template** gives a sheet with the right
+  columns and a "How to fill in" tab. Fill it in, then **Import from Excel** (Excel .xlsx or CSV). You see what
+  will be added or changed, and any rows that can't be read (with the reason), before anything is imported.
+  A row with an existing carer's name updates that carer; blank cells keep their current values.
+  **Download carers (Excel)** gives your current carers in the same layout, to edit in Excel and import back.
 - **Fill gaps only** – next to Auto-fill week. Fills just the empty slots using the same rules, without
   moving anyone already on the schedule (Auto-fill week reshuffles every slot that isn't locked).
 - **Sickness cover** – **🤒 Report sickness** on the Schedule marks a carer off sick for the dates given and
