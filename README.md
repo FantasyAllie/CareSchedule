@@ -21,6 +21,11 @@ in the same browser, otherwise the browser treats it as a fresh copy.
   on the same run on the same day. It applies both ways, so it only needs setting on one of them.
   The carers list shows whether each person is due a weekend off, and flags anyone who has worked 2 weekends
   in a row as **⚑ Weekend off priority**.
+- **Agency staff** – a separate section on the Carers page (**+ Add agency worker**). Agency workers are only
+  used after everything else, to fill shifts no regular carer can cover. They never take a shift from a regular
+  carer and don't affect regular carers' weekends, run rotation or days off. Their days per week is the most
+  they can be booked; the hard rules (driver, gender, leave, days in a row, can't work with…) still apply.
+  Can be switched off in Settings.
 - **Runs** – add, remove, rename, reorder. Double-up (2 carers) or single (1 carer); male only, female only,
   or either; untick days a run doesn't operate. Runs need a driver unless "Needs a driver" is unticked.
   **Only these carers** limits a run to named people (e.g. a run covered by 3 non-drivers).

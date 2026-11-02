@@ -294,6 +294,33 @@ test('preferred runs: "only these runs" is never broken, a preference is mostly 
   assert(E.validate(s, WEEK).list.some(i => i.level === 'warn' && /O: only works R1 \(overridden\)/.test(i.msg)));
 });
 
+test('agency staff only fill gaps and never change the regular carers\' shifts', () => {
+  const regulars = () => [carer('A', 'F', true, 5), carer('B', 'F', true, 5), carer('C', 'M', true, 4), carer('N', 'F', false, 5)];
+  const runs = () => [run('R1', 'double'), run('R2', 'single')];
+  for (let i = 0; i < 10; i++) {
+    const without = E.newState(); without.carers = regulars(); without.runs = runs();
+    const withAg = E.newState(); withAg.runs = runs();
+    withAg.carers = regulars().concat([carer('AG1', 'M', true, 5, { agency: true }), carer('AG2', 'F', false, 5, { agency: true })]);
+    const r1 = E.autoFill(without, WEEK, { random: seeded(700 + i) });
+    const r2 = E.autoFill(withAg, WEEK, { random: seeded(700 + i) });
+    check(withAg);
+    const gaps = r1.issues.list.filter(x => /needed/.test(x.msg)).length;
+    const gapsAfter = r2.issues.list.filter(x => /needed/.test(x.msg)).length;
+    assert(gaps > 0 && gapsAfter < gaps, `agency should fill some gaps (${gaps} -> ${gapsAfter})`);
+    for (const r of runs()) for (let d = 0; d < 7; d++) {
+      const a = E.getCell(E.getWeek(without, WEEK), r, d).slots.map(x => x.c);
+      const b = E.getCell(E.getWeek(withAg, WEEK), r, d).slots.map(x => x.c);
+      a.forEach((id, k) => assert(id ? b[k] === id : (b[k] === null || /^AG/.test(b[k])), `${r.id} day ${d}: ${id} became ${b[k]}`));
+    }
+    assert(!r2.issues.list.some(x => /^AG\d: .*days off/.test(x.msg)), 'agency staff should not get days-off warnings');
+  }
+  // with enough regular staff, agency staff are not used at all
+  const s = E.newState();
+  s.carers = [carer('A', 'F', true, 5), carer('B', 'F', true, 5), carer('C', 'F', true, 4), carer('AG', 'F', true, 5, { agency: true })];
+  s.runs = [run('R', 'single')];
+  for (let i = 0; i < 10; i++) assert.strictEqual(E.autoFill(s, WEEK, { random: seeded(i) }).issues.carers.AG.count, 0);
+});
+
 function placementsOf(s, weeks) {
   const worked = {}, runs = {}; // worked[id] = flat day list; runs[id][weekIndex] = {runId: days}
   for (const c of s.carers) { worked[c.id] = []; runs[c.id] = []; }

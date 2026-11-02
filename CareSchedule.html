@@ -46,6 +46,7 @@
   .tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 10px; background: #eef1f6; margin-right: 3px; }
   .tag.M { background: #dbeafe; } .tag.F { background: #fce7f3; }
   .tag.flag { background: #fef3c7; }
+  .tag.agency { background: #ede9fe; }
   .tag.drv { background: #dcfce7; } .tag.nodrv { background: #f3f4f6; color: var(--muted); }
   .muted { color: var(--muted); }
   .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 10px; }
@@ -103,7 +104,7 @@ function newState() {
     carers: [],
     runs: [],
     weeks: {},
-    settings: { genderPriority: 'M', secondPass: true, useOvertime: true, weekendRule: true, maxInARow: 5 },
+    settings: { genderPriority: 'M', secondPass: true, useOvertime: true, weekendRule: true, maxInARow: 5, useAgency: true },
   };
 }
 
@@ -363,12 +364,15 @@ function autoFill(state, weekStart, opts) {
   const week = getWeek(state, weekStart);
   clearUnlocked(state, weekStart);
   const { booked, worked } = computeBookings(state, week);
-  const carers = state.carers.filter(c => c.active !== false);
+  // agency staff are kept out of every regular step and only fill gaps left at the end
+  const carers = state.carers.filter(c => c.active !== false && !c.agency);
+  const agency = state.carers.filter(c => c.active !== false && c.agency);
   const log = [];
   const rng = opts.random || Math.random;
   const hist = history(state, weekStart);
   const streak = {}, rot = {};
   for (const c of carers) { streak[c.id] = weekendStreak(hist[c.id]); rot[c.id] = rotation(hist[c.id]); }
+  for (const c of agency) { streak[c.id] = 0; rot[c.id] = { runs: [], streak: 0 }; }
   const runCount = {}; // runCount[carerId][runId] this week
   const dayRun = {};   // dayRun[carerId][d] = runId this week
   for (const c of state.carers) { runCount[c.id] = {}; dayRun[c.id] = {}; }
@@ -466,8 +470,8 @@ function autoFill(state, weekStart, opts) {
   const overtime = c => worked[c.id].size >= Number(c.daysPerWeek || 0) ? 1 : 0;
   const short = c => worked[c.id].size < target(c) ? 0 : 1;
 
-  function pick(run, d, cell, idx, rule, cap, passNo) {
-    const cands = carers.filter(c => eligible(c, run, d, rule, cap, passNo, cell));
+  function pick(run, d, cell, idx, rule, cap, passNo, pool) {
+    const cands = (pool || carers).filter(c => eligible(c, run, d, rule, cap, passNo, cell));
     if (!cands.length) return false;
     const score = c => {
       const left = cap(c) - worked[c.id].size;
@@ -599,6 +603,24 @@ function autoFill(state, weekStart, opts) {
     return swapped;
   }
 
+  // Last resort: agency staff fill any slots still empty (their days per week is the most they can do).
+  function agencyPass() {
+    const cap = c => capacity(c, false);
+    let filled = 0;
+    for (const d of DAY_ORDER) {
+      for (const run of orderedRuns(state.runs.filter(r => r.days[d]), rng)) {
+        const cell = getCell(week, run, d);
+        let i;
+        while ((i = emptyIdx(cell)) >= 0) {
+          const rule = { needDriver: needsDriver(run) && !hasDriver(cell) };
+          if (!pick(run, d, cell, i, rule, cap, 2, agency)) break;
+          filled++;
+        }
+      }
+    }
+    return filled;
+  }
+
   function repairGaps() {
     const cap = c => capacity(c, opts.secondPass && opts.useOvertime);
     let fixed = 0;
@@ -672,6 +694,8 @@ function autoFill(state, weekStart, opts) {
   if (f4) log.push(`Moved ${f4} overtime shift(s) to carers who were short of their days.`);
   const f5 = preferenceSwaps();
   if (f5) log.push(`Swapped ${f5} shift(s) on the same day to put carers on their preferred runs.`);
+  const f6 = opts.useAgency !== false && agency.length ? agencyPass() : 0;
+  if (f6) log.push(`Agency staff filled ${f6} shift(s) that no regular carer could cover.`);
   const shiftCount = state.runs.reduce((n, r) => n + r.days.filter(Boolean).length * slotCount(r), 0);
   const wanted = carers.reduce((n, c) => n + target(c), 0);
   const shortBy = carers.reduce((n, c) => n + Math.max(0, target(c) - worked[c.id].size), 0);
@@ -748,7 +772,8 @@ function validate(state, weekStart) {
     const ws = weekendStreak(h);
     const runsThisWeek = new Set(DAYS.flatMap((_, d) => placements[d][c.id] || []));
     carers[c.id] = { days, count: n, contracted: Number(c.daysPerWeek || 0), history: h, weekendStreak: ws, rotation: rotation(h), runsThisWeek };
-    if (state.settings.weekendRule !== false && (days[5] || days[6])) {
+    carers[c.id].agency = !!c.agency;
+    if (!c.agency && state.settings.weekendRule !== false && (days[5] || days[6])) {
       if (ws >= 2) list.push({ level: 'error', msg: `${c.name}: would be a 3rd weekend in a row – needs this weekend off` });
     }
     const maxInARow = Number(state.settings.maxInARow) || 0;
@@ -768,7 +793,7 @@ function validate(state, weekStart) {
     const avail = DAYS.filter((_, d) => carerStatus(c, weekStart, d).ok).length;
     const want = Math.min(Number(c.daysPerWeek || 0), avail);
     carers[c.id].want = want;
-    if (c.active !== false && n < want) {
+    if (c.active !== false && !c.agency && n < want) {
       list.push({ level: 'warn', msg: `${c.name}: ${7 - n} days off – profile allows ${7 - want} (${want - n} day(s) short)` });
     }
     if (n > capacity(c, true)) list.push({ level: 'error', msg: `${c.name}: ${n} days booked, maximum is ${capacity(c, true)}` });
@@ -846,7 +871,7 @@ function viewSchedule() {
     return `<tr><th>${esc(run.name)}<br><span class="tag">${run.type === 'double' ? 'Double up' : 'Single'}</span><span class="tag">${run.gender === 'any' ? 'M/F' : run.gender === 'M' ? 'Male' : 'Female'}</span>${isSpecific(run) ? `<span class="tag" title="${esc(run.allowed.map(id => (byId(id) || {}).name).join(', '))}">${run.allowed.length} named carers</span>` : ''}${needsDriver(run) ? '' : '<span class="tag nodrv">No driver needed</span>'}</th>${tds}</tr>`;
   }).join('');
 
-  const summary = sortedCarers().filter(c => c.active !== false).map(c => {
+  const summaryRow = c => {
     const s = v.carers[c.id];
     const cls = s.count > capacity(c, true) ? 'over' : s.count === s.contracted ? 'met' : 'under';
     const days = DAYS.map((_, d) => {
@@ -864,12 +889,16 @@ function viewSchedule() {
     const pair = s.rotation.runs.length
       ? `Runs: ${s.rotation.runs.map(runName).join(' + ')} – ${s.rotation.streak >= ROTATION_WEEKS ? 'due to swap' : `week ${s.rotation.streak + 1} of ${ROTATION_WEEKS}`}`
       : '';
-    const past = known.length
+    const past = c.agency ? '<span class="muted">agency – only used to fill gaps</span>' : known.length
       ? `${weekendsOff} of ${known.length} weekends off · ${weekendBadge(s.weekendStreak)}<br><span class="muted">${pair}</span>`
       : '<span class="muted">no history yet</span>';
-    return `<tr><td>${esc(c.name)} <span class="tag ${c.gender}">${c.gender}</span><span class="tag ${c.driver ? 'drv' : 'nodrv'}">${c.driver ? 'Driver' : 'Non-driver'}</span>${s.weekendStreak >= 2 ? '<span class="tag flag">⚑ Weekend off priority</span>' : ''}</td>
-      <td class="${cls}">${s.count} / ${s.contracted}${c.overtime ? ' (+1 OT)' : ''}</td>${days}<td>${past}</td></tr>`;
-  }).join('');
+    return `<tr><td>${esc(c.name)} <span class="tag ${c.gender}">${c.gender}</span><span class="tag ${c.driver ? 'drv' : 'nodrv'}">${c.driver ? 'Driver' : 'Non-driver'}</span>${c.agency ? '<span class="tag agency">Agency</span>' : ''}${!c.agency && s.weekendStreak >= 2 ? '<span class="tag flag">⚑ Weekend off priority</span>' : ''}</td>
+      <td class="${c.agency ? '' : cls}">${c.agency ? `${s.count} (max ${s.contracted})` : `${s.count} / ${s.contracted}${c.overtime ? ' (+1 OT)' : ''}`}</td>${days}<td>${past}</td></tr>`;
+  };
+  const activeCarers = sortedCarers().filter(c => c.active !== false);
+  const agencyRows = activeCarers.filter(c => c.agency).map(summaryRow).join('');
+  const summary = activeCarers.filter(c => !c.agency).map(summaryRow).join('') +
+    (agencyRows ? `<tr><th colspan="${DAYS.length + 3}">Agency staff</th></tr>${agencyRows}` : '');
 
   const errs = v.list.filter(i => i.level === 'error').length;
   const warns = v.list.length - errs;
@@ -926,7 +955,7 @@ function carerSelect(run, d, selected, attrs, placeholder) {
     if (!preferredOk(run, c)) notes.push(`only ${preferredNames(c, state.runs)}`);
     else if (prefersRun(c, run)) notes.push('preferred');
     if (bookedElsewhere.has(c.id)) notes.push('booked');
-    const label = `${c.name} (${c.gender}${c.driver ? ', D' : ''})${notes.length ? ' – ' + notes.join(', ') : ''}`;
+    const label = `${c.name} (${c.gender}${c.driver ? ', D' : ''}${c.agency ? ', Agency' : ''})${notes.length ? ' – ' + notes.join(', ') : ''}`;
     return `<option value="${c.id}" ${c.id === selected ? 'selected' : ''}>${esc(label)}</option>`;
   }).join('');
   return `<select data-action="assign" data-run="${run.id}" data-day="${d}" ${attrs}><option value="">${placeholder || '— empty —'}</option>${opts}</select>`;
@@ -1022,17 +1051,17 @@ function download(filename, text, type) {
 }
 
 // ---------- Carers ----------
-function blankCarer() {
-  return { id: uid(), name: '', gender: 'F', driver: false, daysPerWeek: 5, overtime: false, runTypes: 'both', available: DAYS.map(() => true), leave: [], notes: '', active: true };
+function blankCarer(agency) {
+  return { id: uid(), name: '', gender: 'F', driver: false, daysPerWeek: 5, overtime: false, runTypes: 'both', available: DAYS.map(() => true), leave: [], notes: '', active: true, agency: !!agency };
 }
 
 function viewCarers() {
   const hist = history(state, ui.week);
-  const rows = sortedCarers().map(c => {
+  const row = c => {
     const today = todayIso();
     const current = (c.leave || []).filter(l => (l.to || l.from) >= today).map(l => `${l.type === 'AL' ? 'AL' : 'Sick'} ${fmtDate(l.from)}${l.to && l.to !== l.from ? '–' + fmtDate(l.to) : ''}`).join('<br>');
     return `<tr class="${c.active === false ? 'muted' : ''}">
-      <td>${esc(c.name)}${c.active === false ? ' (inactive)' : ''}${weekendStreak(hist[c.id]) >= 2 ? ' <span class="tag flag">⚑ Weekend off priority</span>' : ''}
+      <td>${esc(c.name)}${c.active === false ? ' (inactive)' : ''}${!c.agency && weekendStreak(hist[c.id]) >= 2 ? ' <span class="tag flag">⚑ Weekend off priority</span>' : ''}
         ${notWithNames(c) ? `<br><span class="muted">Not with: ${esc(notWithNames(c))}</span>` : ''}</td>
       <td><span class="tag ${c.gender}">${c.gender === 'M' ? 'Male' : 'Female'}</span></td>
       <td><span class="tag ${c.driver ? 'drv' : 'nodrv'}">${c.driver ? 'Driver' : 'Non-driver'}</span></td>
@@ -1040,17 +1069,28 @@ function viewCarers() {
       <td>${runTypesLabel(c)}${(c.preferredRuns || []).length ? `<br><span class="muted">${c.onlyPreferred ? 'Only' : 'Prefers'}: ${esc(preferredNames(c, state.runs))}</span>` : ''}</td>
       <td>${DAYS.filter((_, i) => c.available[i]).join(', ') || 'none'}</td>
       <td>${current || '<span class="muted">none</span>'}</td>
-      <td>${weekendBadge(weekendStreak(hist[c.id]))}</td>
+      <td>${c.agency ? '<span class="muted">n/a</span>' : weekendBadge(weekendStreak(hist[c.id]))}</td>
       <td><button class="btn" data-action="editCarer" data-id="${c.id}">Edit</button>
           <button class="btn danger" data-action="delCarer" data-id="${c.id}">Remove</button></td></tr>`;
-  }).join('');
+  };
+  const regular = sortedCarers().filter(c => !c.agency);
+  const agencyStaff = sortedCarers().filter(c => c.agency);
+  const head = last => `<thead><tr><th>Name</th><th>Gender</th><th>Driver</th><th>${last ? 'Max days / week' : 'Days / week'}</th><th>Run types</th><th>Can work</th><th>Upcoming leave / sickness</th><th>${last ? 'Weekends' : `Weekends (w/c ${fmtDate(ui.week)})`}</th><th></th></tr></thead>`;
   return `
   ${ui.editCarer ? carerForm(ui.editCarer) : ''}
   <div class="panel">
-    <div class="toolbar"><h3 style="margin:0;flex:1">Carers (${state.carers.length})</h3>
+    <div class="toolbar"><h3 style="margin:0;flex:1">Carers (${regular.length})</h3>
       <button class="btn primary" data-action="newCarer">+ Add carer</button></div>
-    <table><thead><tr><th>Name</th><th>Gender</th><th>Driver</th><th>Days / week</th><th>Run types</th><th>Can work</th><th>Upcoming leave / sickness</th><th>Weekends (w/c ${fmtDate(ui.week)})</th><th></th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="9" class="muted">No carers yet.</td></tr>'}</tbody></table>
+    <table>${head(false)}
+    <tbody>${regular.map(row).join('') || '<tr><td colspan="9" class="muted">No carers yet.</td></tr>'}</tbody></table>
+  </div>
+  <div class="panel">
+    <div class="toolbar"><h3 style="margin:0;flex:1">Agency staff (${agencyStaff.length})</h3>
+      <button class="btn primary" data-action="newAgency">+ Add agency worker</button></div>
+    <p class="muted" style="margin-top:0">Agency staff are only used to fill shifts no regular carer can cover, after everything else is done.
+      They never take a shift from a regular carer and don't affect regular carers' weekends, run rotation or days off.</p>
+    <table>${head(true)}
+    <tbody>${agencyStaff.map(row).join('') || '<tr><td colspan="9" class="muted">No agency staff added.</td></tr>'}</tbody></table>
   </div>`;
 }
 
@@ -1069,13 +1109,14 @@ function carerForm(c) {
     </div>`).join('');
   return `
   <div class="panel" id="carerForm">
-    <h3 style="margin-top:0">${state.carers.some(x => x.id === c.id) ? 'Edit carer' : 'New carer'}</h3>
+    <h3 style="margin-top:0">${state.carers.some(x => x.id === c.id) ? 'Edit' : 'New'} ${c.agency ? 'agency worker' : 'carer'}</h3>
     <div class="row">
       <label>Name <input data-f="name" value="${esc(c.name)}" size="24"></label>
       <label>Gender <select data-f="gender"><option value="F" ${c.gender === 'F' ? 'selected' : ''}>Female</option><option value="M" ${c.gender === 'M' ? 'selected' : ''}>Male</option></select></label>
       <label><input type="checkbox" data-f="driver" ${c.driver ? 'checked' : ''}> Driver</label>
-      <label>Days per week <input type="number" min="0" max="7" data-f="daysPerWeek" value="${c.daysPerWeek}" style="width:60px"></label>
-      <label><input type="checkbox" data-f="overtime" ${c.overtime ? 'checked' : ''}> Agreed +1 overtime day</label>
+      <label>${c.agency ? 'Max days per week' : 'Days per week'} <input type="number" min="0" max="7" data-f="daysPerWeek" value="${c.daysPerWeek}" style="width:60px"></label>
+      <label ${c.agency ? 'hidden' : ''}><input type="checkbox" data-f="overtime" ${c.overtime ? 'checked' : ''}> Agreed +1 overtime day</label>
+      <label><input type="checkbox" data-f="agency" ${c.agency ? 'checked' : ''}> Agency</label>
       <label>Can go on <select data-f="runTypes">
         <option value="both" ${!c.runTypes || c.runTypes === 'both' ? 'selected' : ''}>Double-ups and singles</option>
         <option value="double" ${c.runTypes === 'double' ? 'selected' : ''}>Double-ups only</option>
@@ -1116,6 +1157,8 @@ function readCarerForm() {
   c.daysPerWeek = Math.max(0, Math.min(7, Number(val('daysPerWeek').value) || 0));
   c.overtime = val('overtime').checked;
   c.runTypes = val('runTypes').value;
+  c.agency = val('agency').checked;
+  if (c.agency) c.overtime = false;
   c.preferredRuns = [...f.querySelectorAll('[data-f="preferredRuns"]:checked')].map(x => x.dataset.r);
   c.onlyPreferred = val('onlyPreferred').checked;
   c.active = val('active').checked;
@@ -1175,6 +1218,7 @@ function viewSettings() {
         <option value="none" ${s.genderPriority === 'none' ? 'selected' : ''}>No preference</option></select></label></div>
     <div class="row"><label><input type="checkbox" id="secondPassSetting" ${s.secondPass ? 'checked' : ''}> Do a second pass to fill gaps with spare carers (incl. spare drivers)</label></div>
     <div class="row"><label><input type="checkbox" id="useOvertime" ${s.useOvertime ? 'checked' : ''}> Second pass may use the agreed +1 overtime day</label></div>
+    <div class="row"><label><input type="checkbox" id="useAgency" ${s.useAgency !== false ? 'checked' : ''}> Use agency staff to fill shifts no regular carer can cover</label></div>
     <div class="row"><label>Maximum days in a row <input type="number" min="0" max="13" id="maxInARow" value="${s.maxInARow}" style="width:60px"></label>
       <span class="muted">counts days worked at the end of last week (0 = no limit)</span></div>
     <p class="muted">Whenever a carer ends up working 6 or more days in a row (for example added by hand), the next 2 days are kept off
@@ -1217,6 +1261,7 @@ function sampleData() {
     mk('Hana Price', 'F', false, 5), mk('Isla Reed', 'F', true, 4), mk('Jade Shaw', 'F', false, 5),
     mk('Kyle Turner', 'M', true, 5), mk('Lucy Vance', 'F', false, 4), mk('Mia Walsh', 'F', true, 5),
   ];
+  s.carers.push(mk('Agency – Sam Young', 'M', true, 5, { agency: true }), mk('Agency – Zoe Fox', 'F', false, 5, { agency: true }));
   const pair = ['Amy Hughes', 'Ben Clarke'].map(n => s.carers.find(c => c.name === n));
   pair[0].notWith = [pair[1].id]; pair[1].notWith = [pair[0].id];
   const named = ['Beth Jones', 'Hana Price', 'Jade Shaw'].map(n => s.carers.find(c => c.name === n).id);
@@ -1270,6 +1315,7 @@ document.getElementById('app').addEventListener('click', e => {
     case 'print': window.print(); return;
 
     case 'newCarer': ui.editCarer = blankCarer(); break;
+    case 'newAgency': ui.editCarer = blankCarer(true); break;
     case 'editCarer': ui.editCarer = JSON.parse(JSON.stringify(byId(b.dataset.id))); break;
     case 'cancelCarer': ui.editCarer = null; break;
     case 'addLeave': readCarerForm(); ui.editCarer.leave.push({ type: 'AL', from: todayIso(), to: todayIso() }); render(); return;
@@ -1353,6 +1399,8 @@ document.getElementById('app').addEventListener('change', e => {
     state.settings.maxInARow = Math.max(0, Math.min(13, Number(t.value) || 0));
   } else if (t.id === 'weekendRule') {
     state.settings.weekendRule = t.checked;
+  } else if (t.id === 'useAgency') {
+    state.settings.useAgency = t.checked;
   } else if (t.id === 'useOvertime') {
     state.settings.useOvertime = t.checked;
   } else if (t.id === 'genderPriority') {
