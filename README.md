@@ -1,15 +1,42 @@
 # CareSchedule
 
-An offline weekly scheduler for domiciliary care runs. It works on **Windows and Mac** with **no internet**
-and nothing to install: it is one file, `CareSchedule.html`, that opens in Edge, Chrome, Firefox or Safari.
+An offline weekly scheduler for domiciliary care runs. It works on **Windows and Mac** with **no internet**.
 
-## Getting started
+## Desktop app (recommended)
+
+The desktop app saves everything to a data file on the computer and keeps daily backups, so nothing is lost
+if the browser is cleared.
+
+**Download:** on GitHub, open **Actions → Build desktop app**, click the latest successful run and download
+**CareSchedule-Windows** (installer `.exe`) or **CareSchedule-macOS** (`.dmg`) from *Artifacts*.
+When a version tag such as `v1.0.0` is pushed, the same files are also attached to a **Release**.
+
+- **Windows:** run `CareSchedule-Setup-….exe`. Windows may show "Windows protected your PC" because the app
+  isn't code-signed: click **More info → Run anyway**.
+- **Mac:** open the `.dmg` and drag CareSchedule into Applications. The first time, right-click the app and
+  choose **Open** (it isn't signed by Apple). If macOS says it is "damaged", run
+  `xattr -cr /Applications/CareSchedule.app` in Terminal, then open it again.
+
+**Your data** is saved to `Documents/CareSchedule/careschedule-data.json` after every change. The first
+change each day also copies the previous file into `Documents/CareSchedule/backups/`, keeping the last 30 days.
+**Settings & Data → Open data folder** shows the folder. If the data file is ever damaged, the app restores
+the newest backup automatically and says so.
+
+**Moving over from the browser version:** in the browser, *Settings & Data → Export backup*; in the desktop
+app, *Settings & Data → Import backup*.
+
+To build it yourself: `cd desktop && npm ci && npm start` (run) or `npm run dist` (installer for the
+computer you're on).
+
+## Browser version
+
+`CareSchedule.html` also works on its own in Edge, Chrome, Firefox or Safari – nothing to install.
 
 1. Copy `CareSchedule.html` to a fixed place on the computer (e.g. Documents) and double-click it.
 2. Go to **Settings & Data → Load sample data** to try it out, or add your own carers and runs.
 3. On **Schedule**, pick the week and press **Auto-fill week**.
 
-Data is saved automatically in the browser on that computer. Use **Export backup** regularly (and to move
+In the browser, data is saved in that browser on that computer. Use **Export backup** regularly (and to move
 data to another computer), and **Import backup** to restore. Always open the file from the same location
 in the same browser, otherwise the browser treats it as a fresh copy.
 
@@ -32,6 +59,11 @@ in the same browser, otherwise the browser treats it as a fresh copy.
 - **Schedule** – Monday to Sunday grid. Pick carers by hand (the slot is then 🔒 locked and auto-fill
   leaves it alone), add a 3rd shadow / training carer, copy the previous week, print, export CSV.
   Problems are highlighted in red (e.g. no driver, double booked, on leave) and amber (overrides, overtime).
+- **Sickness cover** – **🤒 Report sickness** on the Schedule marks a carer off sick for the dates given and
+  takes them off every shift in that time. For each emptied shift it lists who can cover it without breaking
+  any rule, best first (regular staff short of their days, then working the day before/after or on their
+  preferred run; overtime and agency last), with a "why others can't" list. Click a name to fill it. Any empty
+  shift also has a **Find cover** link.
 - **Manual overrides** – you can still pick someone on leave, sick or unavailable; you are asked to confirm
   and the cell is flagged as an override.
 

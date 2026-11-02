@@ -19,10 +19,10 @@
   main { padding: 16px; }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 16px; }
   .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
-  button.btn { padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); cursor: pointer; font-size: 13px; }
-  button.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
-  button.btn.danger { color: var(--err); }
-  button.btn:hover { filter: brightness(0.96); }
+  .btn { display: inline-block; padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); cursor: pointer; font-size: 13px; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  .btn.danger { color: var(--err); }
+  .btn:hover { filter: brightness(0.96); }
   input, select { font: inherit; padding: 4px 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); color: var(--text); }
   table { border-collapse: collapse; width: 100%; }
   th, td { border: 1px solid var(--line); padding: 6px; vertical-align: top; text-align: left; }
@@ -50,6 +50,13 @@
   .tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 10px; background: #eef1f6; margin-right: 3px; }
   .tag.M { background: #dbeafe; } .tag.F { background: #fce7f3; }
   .tag.flag { background: #fef3c7; }
+  .panel.sick { border-color: #f5c26b; }
+  .panel.cover { border-color: var(--accent); }
+  .coveritem { border-top: 1px solid var(--line); padding: 8px 0; }
+  .picks { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+  .btn.pick { text-align: left; font-size: 12px; }
+  .why { margin: 4px 0; padding-left: 18px; font-size: 12px; }
+  .linkbtn.cover { display: block; margin-bottom: 2px; color: var(--err); }
   .tag.agency { background: #ede9fe; }
   .tag.drv { background: #dcfce7; } .tag.nodrv { background: #f3f4f6; color: var(--muted); }
   .muted { color: var(--muted); }
@@ -806,8 +813,84 @@ function validate(state, weekStart) {
   return { cells, list, carers };
 }
 
+// Mark a carer off sick from `from` to `to` (YYYY-MM-DD) and take them off every shift in that period.
+// Returns the slots that were emptied: [{ week, runId, d, idx }].
+function reportSickness(state, carerId, from, to) {
+  const carer = state.carers.find(c => c.id === carerId);
+  if (!carer || !from) return [];
+  if (!to || to < from) to = from;
+  carer.leave = (carer.leave || []).concat([{ type: 'SICK', from, to }]);
+  const emptied = [];
+  for (const ws of Object.keys(state.weeks).sort()) {
+    for (let d = 0; d < 7; d++) {
+      const date = addDays(ws, d);
+      if (date < from || date > to) continue;
+      for (const run of state.runs) {
+        if (!run.days[d]) continue;
+        const cell = getCell(state.weeks[ws], run, d);
+        cell.slots.forEach((sl, idx) => {
+          if (sl.c !== carerId) return;
+          Object.assign(sl, { c: null, locked: false, override: false });
+          emptied.push({ week: ws, runId: run.id, d, idx });
+        });
+        if (cell.shadow && cell.shadow.c === carerId) cell.shadow = { c: null, override: false };
+      }
+    }
+  }
+  return emptied;
+}
+
+// Who could cover an empty slot. Each carer is tried in the slot and the week re-checked: anyone who would
+// create a new rule problem is ruled out (with that problem as the reason). The rest are ranked: regular staff
+// before agency, no overtime before overtime, most days short of their profile first, then working the
+// day before/after, then preferred run. Returns { ok: [{ carer, notes }], no: [{ carer, reason }] }.
+function suggestCover(state, weekStart, runId, d, idx) {
+  const run = state.runs.find(r => r.id === runId);
+  const week = getWeek(state, weekStart);
+  const cell = run && run.days[d] && getCell(week, run, d);
+  const slot = cell && cell.slots[idx];
+  if (!slot || slot.c) return { ok: [], no: [] };
+  const otherEmpty = cell.slots.some((sl, i) => i !== idx && !sl.c);
+  const problems = v => new Set(v.list.filter(i => i.level === 'error' && !/carer\(s\) needed/.test(i.msg) &&
+    !(otherEmpty && /No driver/.test(i.msg))).map(i => i.msg));
+  const before = validate(state, weekStart);
+  const base = problems(before);
+  const ok = [], no = [];
+  for (const c of state.carers.filter(c => c.active !== false)) {
+    slot.c = c.id;
+    let fresh;
+    try { fresh = [...problems(validate(state, weekStart))].filter(m => !base.has(m)); } finally { slot.c = null; }
+    if (fresh.length) {
+      const reason = fresh[0].replace(new RegExp(`^.* (${DAYS.join('|')}): `), '').replace(`${c.name}: `, '')
+        .replace(/^double booked on (\w+)$/, 'already working $1')
+        .replace(/^(\d+) days booked, maximum is (\d+)$/, 'would be $1 days this week (maximum $2)');
+      no.push({ carer: c, reason });
+      continue;
+    }
+    const b = before.carers[c.id];
+    const short = c.agency ? 0 : Math.max(0, (b.want || 0) - b.count);
+    const overtime = !c.agency && b.count + 1 > Number(c.daysPerWeek || 0);
+    const near = [d - 1, d + 1].filter(e => e >= 0 && e <= 6 && b.days[e]);
+    const sameRun = near.some(e => run.days[e] && getCell(week, run, e).slots.some(sl => sl.c === c.id));
+    const preferred = (c.preferredRuns || []).includes(run.id);
+    const notes = [];
+    if (c.agency) notes.push('agency');
+    if (short) notes.push(`${short} day(s) short`);
+    if (overtime) notes.push('overtime day');
+    if (sameRun) notes.push('on this run the day before/after');
+    else if (near.length) notes.push('working the day before/after');
+    if (preferred) notes.push('preferred run');
+    ok.push({ carer: c, notes, rank: [c.agency ? 1 : 0, overtime ? 1 : 0, -short, sameRun ? 0 : near.length ? 1 : 2, preferred ? 0 : 1] });
+  }
+  ok.sort((a, b) => {
+    for (let i = 0; i < a.rank.length; i++) if (a.rank[i] !== b.rank[i]) return a.rank[i] - b.rank[i];
+    return a.carer.name.localeCompare(b.carer.name);
+  });
+  return { ok: ok.map(({ carer, notes }) => ({ carer, notes })), no };
+}
+
 if (typeof module !== 'undefined') {
-  module.exports = { prefersRun, cantPair, DAYS, HISTORY_WEEKS, weekDays, longestStretch, restBreaches, ROTATION_WEEKS, history, weekendStreak, rotation, uid, addDays, mondayOf, newState, getWeek, getCell, carerStatus, capacity, autoFill, validate, clearUnlocked };
+  module.exports = { reportSickness, suggestCover, prefersRun, cantPair, DAYS, HISTORY_WEEKS, weekDays, longestStretch, restBreaches, ROTATION_WEEKS, history, weekendStreak, rotation, uid, addDays, mondayOf, newState, getWeek, getCell, carerStatus, capacity, autoFill, validate, clearUnlocked };
 }
 // ===== ENGINE END =====
 </script>
@@ -815,14 +898,22 @@ if (typeof module !== 'undefined') {
 <script>
 // ===== UI =====
 const STORE_KEY = 'careschedule.v1';
+// In the desktop app (desktop/ folder) data is kept in a file via window.careDesktop; opened as a plain
+// web page it is kept in the browser's storage.
+const desktop = window.careDesktop || null;
+let dataProblem = null; // set when saved data couldn't be read, so we don't overwrite it
+
 let state = load();
-let ui = { tab: 'schedule', week: mondayOf(todayIso()), editCarer: null, editRun: null, report: null };
+let ui = { tab: 'schedule', week: mondayOf(todayIso()), editCarer: null, editRun: null, report: null, sickForm: null, cover: [] };
 
 function load() {
   try {
-    const raw = localStorage.getItem(STORE_KEY);
+    const raw = desktop ? desktop.load() : localStorage.getItem(STORE_KEY);
     if (raw) return withDefaults(JSON.parse(raw));
-  } catch (e) { console.warn('Could not load saved data', e); }
+  } catch (e) {
+    console.warn('Could not load saved data', e);
+    dataProblem = e.message || String(e);
+  }
   return newState();
 }
 function withDefaults(data) {
@@ -830,9 +921,21 @@ function withDefaults(data) {
   for (const c of data.carers || []) delete c.weekendPriority; // replaced by the automatic weekend-off flag
   return Object.assign(s, data, { settings: Object.assign(s.settings, data.settings) });
 }
+let saveFailed = false;
 function save() {
-  try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
-  catch (e) { alert('Could not save to browser storage. Please use "Export backup" to keep your data.'); }
+  if (dataProblem) return; // never overwrite data we couldn't read
+  try {
+    if (desktop) {
+      const result = desktop.save(JSON.stringify(state));
+      if (result !== true) throw new Error(result);
+    } else {
+      localStorage.setItem(STORE_KEY, JSON.stringify(state));
+    }
+    saveFailed = false;
+  } catch (e) {
+    if (!saveFailed) alert(desktop ? `Could not save your data file: ${e.message}` : 'Could not save to browser storage. Please use "Export backup" to keep your data.');
+    saveFailed = true;
+  }
 }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])); }
 const byId = id => state.carers.find(c => c.id === id);
@@ -870,7 +973,8 @@ function viewSchedule() {
         ? `<div class="slot shadow">${carerSelect(run, d, cell.shadow.c, 'data-slot="shadow"', 'Shadow / training')}</div>`
         : `<button class="linkbtn" data-action="shadow" data-run="${run.id}" data-day="${d}">+ Shadow Carer</button>`;
       const issues = iss.map(i => `<div class="${i.level === 'error' ? 'e' : 'w'}">${esc(i.msg)}</div>`).join('');
-      return `<td class="cell ${cls}">${slots}${shadow}<div class="issues">${issues}</div></td>`;
+      const findCover = cell.slots.map((sl, i) => sl.c ? '' : `<button class="linkbtn cover" data-action="findCover" data-run="${run.id}" data-day="${d}" data-slot="${i}">Find cover</button>`).find(Boolean) || '';
+      return `<td class="cell ${cls}">${slots}${findCover}${shadow}<div class="issues">${issues}</div></td>`;
     }).join('');
     return `<tr><th>${esc(run.name)}<br><span class="tag">${run.type === 'double' ? 'Double up' : 'Single'}</span><span class="tag">${run.gender === 'any' ? 'M/F' : run.gender === 'M' ? 'Male' : 'Female'}</span>${isSpecific(run) ? `<span class="tag" title="${esc(run.allowed.map(id => (byId(id) || {}).name).join(', '))}">${run.allowed.length} named carers</span>` : ''}${needsDriver(run) ? '' : '<span class="tag nodrv">No driver needed</span>'}</th>${tds}</tr>`;
   }).join('');
@@ -915,6 +1019,7 @@ function viewSchedule() {
       <span style="flex:1"></span>
       <label><input type="checkbox" id="secondPass" ${state.settings.secondPass ? 'checked' : ''}> Double pass</label>
       <button class="btn primary" data-action="autofill">Auto-fill week</button>
+      <button class="btn" data-action="sickForm">🤒 Report sickness</button>
       <button class="btn" data-action="clearUnlocked">Clear unlocked</button>
       <button class="btn danger" data-action="clearAll">Clear all</button>
       <button class="btn" data-action="copyPrev">Copy previous week</button>
@@ -924,6 +1029,8 @@ function viewSchedule() {
     <div class="legend">Choosing a carer by hand locks the slot (🔒) so auto-fill won't change it. Click the lock to unlock.
       Auto-fill is shuffled each time, so press it again for a different version.
       ${errs ? `<b class="over">${errs} problem(s)</b>` : '<b class="met">No problems</b>'}${warns ? `, <b class="under">${warns} warning(s)</b>` : ''}</div>
+    ${ui.sickForm ? sickFormView() : ''}
+    ${coverPanel()}
     ${ui.report ? `<div class="report panel" style="margin-top:8px">${esc(ui.report)}</div>` : ''}
     <div class="grid-wrap"><table class="grid"><colgroup><col class="runcol">${DAYS.map(() => '<col>').join('')}</colgroup><thead><tr><th>Run</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>
   </div>
@@ -932,6 +1039,47 @@ function viewSchedule() {
     <div class="grid-wrap"><table><thead><tr><th>Carer</th><th>Days</th>${DAYS.map(d => `<th>${d}</th>`).join('')}<th>Previous ${HISTORY_WEEKS} weeks</th></tr></thead><tbody>${summary}</tbody></table></div>
   </div>
   <div id="print-area">${printTable()}</div>`;
+}
+
+function sickFormView() {
+  const f = ui.sickForm;
+  return `<div class="panel sick" id="sickForm" style="margin-top:8px">
+    <h3 style="margin-top:0">Report sickness</h3>
+    <div class="row">
+      <label>Carer <select data-f="sickCarer"><option value="">Choose…</option>${sortedCarers().filter(c => c.active !== false)
+        .map(c => `<option value="${c.id}" ${c.id === f.carer ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+      <label>Off sick from <input type="date" data-f="sickFrom" value="${f.from}"></label>
+      <label>to <input type="date" data-f="sickTo" value="${f.to}"></label>
+      <button class="btn primary" data-action="sickSave">Mark sick &amp; find cover</button>
+      <button class="btn" data-action="sickCancel">Cancel</button>
+    </div>
+    <div class="muted">They are taken off every shift in those dates (locked ones too) and you get cover suggestions for each one.</div>
+  </div>`;
+}
+
+// Suggested cover for each slot in ui.cover that is still empty.
+function coverPanel() {
+  ui.cover = ui.cover.filter(x => {
+    const run = runById(x.runId);
+    const sl = run && state.weeks[x.week] && run.days[x.d] && getCell(state.weeks[x.week], run, x.d).slots[x.idx];
+    return sl && !sl.c;
+  });
+  if (!ui.cover.length) return '';
+  const items = ui.cover.map((x, k) => {
+    const run = runById(x.runId);
+    const { ok, no } = suggestCover(state, x.week, x.runId, x.d, x.idx);
+    const picks = ok.slice(0, 6).map(o => `<button class="btn pick" data-action="coverPick" data-k="${k}" data-c="${o.carer.id}">
+        <b>${esc(o.carer.name)}</b>${o.notes.length ? `<br><span class="muted">${esc(o.notes.join(' · '))}</span>` : ''}</button>`).join('');
+    return `<div class="coveritem">
+      <div><b>${esc(run.name)} – ${DAYS[x.d]} ${fmtDate(addDays(x.week, x.d))}</b>
+        <button class="linkbtn" data-action="coverSkip" data-k="${k}">leave empty</button></div>
+      <div class="picks">${picks || '<span class="over">No one can cover this without breaking a rule – see below, or use agency staff.</span>'}</div>
+      ${no.length ? `<details><summary class="muted">Why others can't (${no.length})</summary><ul class="why">${no
+        .map(n => `<li><b>${esc(n.carer.name)}</b> – ${esc(n.reason)}</li>`).join('')}</ul></details>` : ''}
+    </div>`;
+  }).join('');
+  return `<div class="panel cover" style="margin-top:8px"><h3 style="margin-top:0">Cover needed (${ui.cover.length})</h3>
+    <div class="muted" style="margin-bottom:6px">Best options first. Everyone listed can do it without breaking any rule. Click a name to put them on.</div>${items}</div>`;
 }
 
 function weekendBadge(streak) {
@@ -1244,8 +1392,11 @@ function viewSettings() {
   </div>
   <div class="panel">
     <h3 style="margin-top:0">Your data</h3>
-    <p>Everything is stored on this computer only (in this browser) – no internet needed. Export a backup regularly, and use it to move data to another computer.</p>
+    ${desktop ? `<p>Everything is saved automatically to a file on this computer – no internet needed:<br><code>${esc(desktop.info().file)}</code></p>
+    <p class="muted">A copy is kept each day in the <b>backups</b> folder next to it (the last ${desktop.info().keep} days). To move to another computer, use Export backup here and Import backup there.</p>`
+    : `<p>Everything is stored on this computer only (in this browser) – no internet needed. Export a backup regularly, and use it to move data to another computer.</p>`}
     <div class="toolbar">
+      ${desktop ? '<button class="btn" data-action="openDataFolder">Open data folder</button>' : ''}
       <button class="btn primary" data-action="backup">Export backup</button>
       <label class="btn">Import backup <input type="file" id="importFile" accept=".json,application/json" hidden></label>
       <button class="btn" data-action="sample">Load sample data</button>
@@ -1317,6 +1468,39 @@ document.getElementById('app').addEventListener('click', e => {
     }
     case 'lock': { const s = getCell(week, runById(b.dataset.run), Number(b.dataset.day)).slots[Number(b.dataset.slot)]; s.locked = !s.locked; break; }
     case 'shadow': getCell(week, runById(b.dataset.run), Number(b.dataset.day)).shadowOpen = true; break;
+    case 'findCover': {
+      const x = { week: ui.week, runId: b.dataset.run, d: Number(b.dataset.day), idx: Number(b.dataset.slot) };
+      if (!ui.cover.some(y => JSON.stringify(y) === JSON.stringify(x))) ui.cover.push(x);
+      break;
+    }
+    case 'coverPick': {
+      const x = ui.cover[Number(b.dataset.k)];
+      getCell(state.weeks[x.week], runById(x.runId), x.d).slots[x.idx] = { c: b.dataset.c, locked: true, override: false };
+      ui.cover.splice(Number(b.dataset.k), 1);
+      ui.report = null;
+      break;
+    }
+    case 'coverSkip': ui.cover.splice(Number(b.dataset.k), 1); break;
+    case 'sickForm': {
+      const today = todayIso();
+      const from = today >= ui.week && today <= addDays(ui.week, 6) ? today : ui.week;
+      ui.sickForm = { carer: '', from, to: from };
+      break;
+    }
+    case 'sickCancel': ui.sickForm = null; break;
+    case 'sickSave': {
+      const f = document.getElementById('sickForm');
+      const carerId = f.querySelector('[data-f="sickCarer"]').value;
+      const from = f.querySelector('[data-f="sickFrom"]').value;
+      const to = f.querySelector('[data-f="sickTo"]').value || from;
+      if (!carerId || !from) { alert('Choose the carer and the first day they are off sick.'); return; }
+      const emptied = reportSickness(state, carerId, from, to);
+      ui.sickForm = null;
+      ui.cover = ui.cover.concat(emptied);
+      ui.report = `${byId(carerId).name} marked off sick ${fmtDate(from)}${to > from ? ' to ' + fmtDate(to) : ''}: taken off ${emptied.length} shift(s).` +
+        (emptied.length ? ' Choose cover below.' : ' They had no shifts in those dates.');
+      break;
+    }
     case 'csv': exportCsv(); return;
     case 'print': window.print(); return;
 
@@ -1367,11 +1551,12 @@ document.getElementById('app').addEventListener('click', e => {
       break;
     }
 
+    case 'openDataFolder': desktop.openFolder(); return;
     case 'backup': download(`careschedule-backup-${todayIso()}.json`, JSON.stringify(state, null, 2), 'application/json'); return;
     case 'sample': if (state.carers.length && !confirm('Replace all current data with sample data?')) return;
-      state = sampleData(); ui.tab = 'schedule'; break;
+      state = sampleData(); dataProblem = null; ui.tab = 'schedule'; break;
     case 'reset': if (!confirm('Delete ALL carers, runs and schedules? Export a backup first if unsure.')) return;
-      state = newState(); break;
+      state = newState(); dataProblem = null; break;
     default: return;
   }
   save(); render();
@@ -1420,6 +1605,7 @@ document.getElementById('app').addEventListener('change', e => {
         if (!Array.isArray(data.carers) || !Array.isArray(data.runs)) throw new Error('Not a CareSchedule backup');
         if (!confirm('Replace all current data with this backup?')) return;
         state = withDefaults(data);
+        dataProblem = null;
         save(); render(); alert('Backup imported.');
       } catch (err) { alert('Could not import: ' + err.message); }
     });
@@ -1431,6 +1617,11 @@ document.getElementById('app').addEventListener('change', e => {
 });
 
 render();
+if (desktop && desktop.info().notice) alert(desktop.info().notice);
+if (dataProblem) {
+  alert(`Your saved data could not be read (${dataProblem}).\n\nNothing will be saved until you restore it: go to Settings & Data → Import backup` +
+    (desktop ? ' and choose the latest file in the backups folder (Open data folder).' : '.'));
+}
 </script>
 </body>
 </html>

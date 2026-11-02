@@ -321,6 +321,35 @@ test('agency staff only fill gaps and never change the regular carers\' shifts',
   for (let i = 0; i < 10; i++) assert.strictEqual(E.autoFill(s, WEEK, { random: seeded(i) }).issues.carers.AG.count, 0);
 });
 
+test('sickness: carer is taken off their shifts and cover suggestions follow the rules', () => {
+  const s = E.newState();
+  s.carers = [carer('SICK', 'F', true, 5), carer('ND', 'F', false, 5), carer('D1', 'F', true, 5), carer('D2', 'F', true, 5),
+    carer('MAN', 'M', true, 5), carer('BUSY', 'F', true, 5), carer('AG', 'F', true, 5, { agency: true }),
+    carer('NOTWITH', 'F', true, 5, { notWith: ['ND'] })];
+  s.runs = [run('R1', 'double', 'F'), run('R2', 'single')];
+  const w = E.getWeek(s, WEEK);
+  const put = (r, d, i, c) => { E.getCell(w, s.runs[r], d).slots[i] = { c, locked: true, override: false }; };
+  put(0, 2, 0, 'SICK'); put(0, 2, 1, 'ND');   // Wed R1: SICK (driver) + ND
+  put(1, 2, 0, 'BUSY');                       // BUSY already working Wed
+  put(1, 0, 0, 'D1'); put(1, 1, 0, 'D1'); put(1, 3, 0, 'D1'); put(1, 4, 0, 'D1'); put(1, 5, 0, 'D1'); // D1 on 5 days already
+  put(1, 6, 0, 'D2');                         // D2 one day in
+
+  const emptied = E.reportSickness(s, 'SICK', E.addDays(WEEK, 2), E.addDays(WEEK, 2));
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(emptied)), [{ week: WEEK, runId: 'R1', d: 2, idx: 0 }]);
+  assert(s.carers[0].leave.some(l => l.type === 'SICK'));
+
+  const { ok, no } = E.suggestCover(s, WEEK, 'R1', 2, 0);
+  const okIds = ok.map(x => x.carer.id), why = Object.fromEntries(no.map(x => [x.carer.id, x.reason]));
+  assert(!okIds.includes('SICK') && /Sickness/.test(why.SICK), why.SICK);
+  assert(!okIds.includes('ND') && !okIds.includes('BUSY'), 'already working that day');
+  assert(!okIds.includes('MAN') && /female only/.test(why.MAN), why.MAN);
+  assert(!okIds.includes('NOTWITH') && /can't work together/.test(why.NOTWITH), why.NOTWITH);
+  assert(!okIds.includes('D1') && /days in a row/.test(why.D1), why.D1);   // would be a 6th day in a row
+  assert.strictEqual(okIds[0], 'D2', `best cover should be D2, got ${okIds}`);
+  assert.strictEqual(okIds[okIds.length - 1], 'AG', 'agency last');
+  assert(ok[0].notes.some(n => /short/.test(n)));
+});
+
 function placementsOf(s, weeks) {
   const worked = {}, runs = {}; // worked[id] = flat day list; runs[id][weekIndex] = {runId: days}
   for (const c of s.carers) { worked[c.id] = []; runs[c.id] = []; }

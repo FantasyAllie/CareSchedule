@@ -1,0 +1,70 @@
+{
+  "name": "careschedule",
+  "productName": "CareSchedule",
+  "version": "1.0.0",
+  "description": "Offline weekly scheduler for domiciliary care runs",
+  "author": "FantasyAllie",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/FantasyAllie/CareSchedule.git"
+  },
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --publish never"
+  },
+  "build": {
+    "appId": "com.careschedule.app",
+    "productName": "CareSchedule",
+    "files": [
+      "main.js",
+      "preload.js"
+    ],
+    "extraResources": [
+      {
+        "from": "../CareSchedule.html",
+        "to": "CareSchedule.html"
+      }
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "CareSchedule-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "category": "public.app-category.productivity",
+      "identity": null,
+      "artifactName": "CareSchedule-${version}-mac.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ]
+    },
+    "publish": null
+  },
+  "devDependencies": {
+    "electron": "39.8.10",
+    "electron-builder": "26.17.0"
+  }
+}
