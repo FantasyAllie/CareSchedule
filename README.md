@@ -84,9 +84,15 @@ in the same browser, otherwise the browser treats it as a fresh copy.
 - **Finalise week** – once a week is done, **✔ Finalise week** switches off Auto-fill, Fill gaps only,
   clearing and editing for it, so it can't be changed by accident (the weekend and days-in-a-row rules rely
   on past weeks being right). Sickness cover still works on a finalised week. **Reopen week** undoes it.
-- **Printing** – choose what to print next to the Print button: the **run rota** (runs × days), a **carer rota**
-  for the wall (carers × days, with their run and who they're working with), or **a sheet for each carer**
-  (one page each, listing their week).
+- **Share** – the **Share ▾** button on the Schedule has everything for getting the rota out:
+  - **PDF for carers:** a designed **team rota** (landscape: colour-coded runs, who each carer is working with, an
+    *Open shifts* box so staff can offer to pick them up) or **one page per carer** (their week day by day). Both
+    show your organisation name (set it in *Settings & Data*) and the date published. Days not working always show
+    as "Day off", so nobody's sickness or leave is shared with the team. In the desktop app the PDF is saved
+    straight away, ready to email or WhatsApp; in a browser the print window opens – choose *Save as PDF*.
+  - **Print:** the run rota, a carer rota for the wall, or a sheet for each carer (with full detail, for the office).
+  - **Export CSV** for spreadsheets.
+  Unfilled places show as **[OPEN]**.
 - **Undo** – the **↶ Undo** button (top right) or Ctrl+Z / ⌘Z steps back through the last 30 changes,
   including auto-fills and imports.
 - **Import carers from Excel** – on the Carers page, **Download Excel template** gives a sheet with the right
