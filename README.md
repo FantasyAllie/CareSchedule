@@ -22,6 +22,16 @@ change each day also copies the previous file into `Documents/CareSchedule/backu
 **Settings & Data → Open data folder** shows the folder. If the data file is ever damaged, the app restores
 the newest backup automatically and says so.
 
+**Sharing with the office through Google Drive:** install *Google Drive for desktop* on each computer, then in
+CareSchedule go to *Settings & Data → Change data folder…* and pick the same shared Drive folder on every computer
+(right-click the folder in Drive and choose *Available offline* so it keeps working without internet).
+Only one computer can make changes at a time: the others open it **view only**, see who has it open, and update
+automatically when that person saves. When they close CareSchedule, the next computer can edit (straight away with
+*Try again*, or automatically within a minute). A lock left behind by a computer that crashed or lost power is taken
+over after 3 minutes. If Drive ever delivers someone else's copy while you are editing (e.g. two people opened it at
+the same moment before Drive had synced), your version is kept and theirs is saved next to it as
+`careschedule-data.from-another-computer-….json`.
+
 **Moving over from the browser version:** in the browser, *Settings & Data → Export backup*; in the desktop
 app, *Settings & Data → Import backup*.
 
@@ -59,6 +69,18 @@ in the same browser, otherwise the browser treats it as a fresh copy.
 - **Schedule** – Monday to Sunday grid. Pick carers by hand (the slot is then 🔒 locked and auto-fill
   leaves it alone), add a 3rd shadow / training carer, copy the previous week, print, export CSV.
   Problems are highlighted in red (e.g. no driver, double booked, on leave) and amber (overrides, overtime).
+- **Plan several weeks** – *Auto-fill [2/4/6/8] weeks* plans this week and the following ones in date order
+  (each week uses the ones before it); finalised weeks are skipped.
+- **Leave planner** (Leave page) – book annual leave or sickness and press *Check cover* first: day by day it shows
+  roughly how many carers, drivers and male/female staff would be around against the shifts to cover, and flags any
+  day that would be short. Below it, a calendar of who's off over the next 4, 8 or 13 weeks, with days likely to be
+  short of staff in red.
+- **Trainees** – on a new starter's page set *Trainee – only shadows experienced carers until* a date. Until then
+  auto-fill only puts them in the shadow place, next to an experienced (non-trainee, non-agency) carer, keeping them
+  on the same run where it can; after the date they work normally. (Also a column in the Excel template.)
+- **Fairness report** (Reports page) – for the last 4, 8, 13 or 26 weeks: days worked against days due, days short,
+  overtime, weekends worked, most weekends in a row, sick days, annual leave and shadow days for each carer, with
+  anything out of line in amber. Can be downloaded as Excel.
 - **Finalise week** – once a week is done, **✔ Finalise week** switches off Auto-fill, Fill gaps only,
   clearing and editing for it, so it can't be changed by accident (the weekend and days-in-a-row rules rely
   on past weeks being right). Sickness cover still works on a finalised week. **Reopen week** undoes it.

@@ -425,6 +425,77 @@ test('carer spreadsheet: import adds, updates, skips examples and explains bad r
   assert.strictEqual(JSON.stringify(E.carersToRows(s)), snapshot);
 });
 
+test('trainees only shadow experienced carers until their date, then work normally', () => {
+  for (let i = 0; i < 8; i++) {
+    const s = rosterState();
+    const wed = E.addDays(WEEK, 2);
+    s.carers.push(carer('T', 'F', true, 5, { traineeUntil: wed }));
+    E.autoFill(s, WEEK, { random: seeded(1100 + i) });
+    check(s);
+    const week = E.getWeek(s, WEEK);
+    let shadowDays = 0, normalDays = 0;
+    for (const r of s.runs) for (let d = 0; d < 7; d++) {
+      const cell = E.getCell(week, r, d);
+      if (cell.slots.some(x => x.c === 'T')) { normalDays++; assert(d > 2, `trainee in a normal slot on day ${d}`); }
+      if (cell.shadow.c === 'T') {
+        shadowDays++;
+        assert(d <= 2, `trainee still shadowing after their date (day ${d})`);
+        assert(cell.slots.some(x => x.c && x.c !== 'T' && !s.carers.find(c => c.id === x.c).traineeUntil), 'shadowing with no experienced carer');
+        assert(cell.shadow.auto);
+      }
+    }
+    assert(shadowDays >= 1, 'trainee was never put on a shadow shift');
+    assert(shadowDays + normalDays <= 5);
+    // re-running auto-fill replaces auto shadows, but keeps one chosen by hand
+    const manual = E.getCell(week, s.runs[0], 6);
+    manual.shadow = { c: 'M3', override: false };
+    E.autoFill(s, WEEK, { random: seeded(1200 + i) });
+    assert.strictEqual(E.getCell(week, s.runs[0], 6).shadow.c, 'M3');
+  }
+});
+
+test('plan several weeks: fills in order and skips finalised weeks', () => {
+  const s = rosterState();
+  E.autoFill(s, E.addDays(WEEK, 7), { random: seeded(5) });
+  E.getWeek(s, E.addDays(WEEK, 7)).final = true;
+  const before = JSON.stringify(E.getWeek(s, E.addDays(WEEK, 7)));
+  const res = E.autoFillWeeks(s, WEEK, 4, { random: seeded(6) });
+  assert.strictEqual(res.map(r => r.finalised ? 'F' : 'x').join(''), 'xFxx');
+  assert.strictEqual(JSON.stringify(E.getWeek(s, E.addDays(WEEK, 7))), before);
+  for (const k of [0, 2, 3]) assert(Object.keys(E.getWeek(s, E.addDays(WEEK, 7 * k)).cells).length > 0);
+  check(s);
+});
+
+test('leave planner warns when leave would leave too few carers, drivers or women', () => {
+  const s = E.newState();
+  s.carers = [carer('D1', 'F', true, 7), carer('D2', 'M', true, 7), carer('N1', 'F', false, 7), carer('N2', 'F', false, 7)];
+  s.runs = [run('R1', 'double', 'F'), run('R2', 'single')];
+  const ok = E.leaveImpact(s, 'N2', WEEK, WEEK);           // N2 off: 3 people for 3 shifts, D2 still drives R2
+  assert.strictEqual(ok.problemDays, 0, JSON.stringify(ok.days));
+  const bad = E.leaveImpact(s, 'D1', WEEK, E.addDays(WEEK, 1)); // D1 off: one driver left for two runs
+  assert.strictEqual(bad.days.length, 2);
+  assert.strictEqual(bad.problemDays, 2);
+  const msgs = bad.days[0].short.join(' | ');
+  assert.strictEqual(msgs, 'about 1 drivers for 2 runs needing one');
+  assert.strictEqual(s.carers[0].leave.length, 0, 'checking leave must not add it');
+});
+
+test('fairness report counts days, weekends, overtime, shortfalls and leave', () => {
+  const s = E.newState();
+  s.carers = [carer('A', 'F', true, 3, { leave: [{ type: 'SICK', from: E.addDays(WEEK, 7), to: E.addDays(WEEK, 8) }] }), carer('B', 'F', true, 2)];
+  s.runs = [run('S', 'single')];
+  const put = (wk, d, c) => { E.getCell(E.getWeek(s, E.addDays(WEEK, 7 * wk)), s.runs[0], d).slots[0] = { c, locked: true, override: false }; };
+  [0, 1, 5, 6].forEach(d => put(0, d, 'A'));    // week 1: A 4 days (1 overtime), weekend
+  [2, 3].forEach(d => put(0, d, 'B'));
+  [5].forEach(d => put(1, d, 'A'));             // week 2: A 1 day (sick Mon-Tue, due 3 -> 2 short), weekend
+  [0, 1].forEach(d => put(1, d, 'B'));
+  const rep = E.fairnessReport(s, E.addDays(WEEK, 7), 4);
+  assert.strictEqual(rep.weeks.length, 2);
+  const a = rep.rows.find(r => r.carer.id === 'A'), b = rep.rows.find(r => r.carer.id === 'B');
+  assert.deepStrictEqual([a.days, a.overtime, a.short, a.weekendsWorked, a.longestWeekendRun, a.sickDays], [5, 1, 2, 2, 2, 2]);
+  assert.deepStrictEqual([b.days, b.short, b.weekendsWorked], [4, 0, 0]);
+});
+
 function placementsOf(s, weeks) {
   const worked = {}, runs = {}; // worked[id] = flat day list; runs[id][weekIndex] = {runId: days}
   for (const c of s.carers) { worked[c.id] = []; runs[c.id] = []; }

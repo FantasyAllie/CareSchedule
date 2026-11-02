@@ -6,4 +6,9 @@ contextBridge.exposeInMainWorld('careDesktop', {
   save: json => ipcRenderer.sendSync('data:save', json),
   info: () => ipcRenderer.sendSync('data:info'),
   openFolder: () => ipcRenderer.send('data:openFolder'),
+  chooseFolder: () => ipcRenderer.invoke('data:chooseFolder'),
+  retryLock: () => ipcRenderer.sendSync('lock:retry'),
+  onChanged: cb => ipcRenderer.on('data:changed', () => cb()),
+  onConflict: cb => ipcRenderer.on('data:conflict', (_, name) => cb(name)),
+  onLockChanged: cb => ipcRenderer.on('lock:changed', (_, info) => cb(info)),
 });
