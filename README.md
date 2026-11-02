@@ -16,10 +16,16 @@ in the same browser, otherwise the browser treats it as a fresh copy.
 ## Features
 
 - **Carers** – add, edit, remove (or mark inactive). Each has gender, driver / non-driver, days per week,
-  an agreed +1 overtime day, whether they can go on double-ups, singles or both, which weekdays they can work, dated annual leave / sickness, and a **Can't work with** list (e.g. a married couple) – they are never put
+  an agreed +1 overtime day, whether they can go on double-ups, singles or both, which weekdays they can work, dated annual leave / sickness, **Preferred runs** (tick **Only these runs** for a carer who
+  only ever does a specific run), and a **Can't work with** list (e.g. a married couple) – they are never put
   on the same run on the same day. It applies both ways, so it only needs setting on one of them.
   The carers list shows whether each person is due a weekend off, and flags anyone who has worked 2 weekends
   in a row as **⚑ Weekend off priority**.
+- **Agency staff** – a separate section on the Carers page (**+ Add agency worker**). Agency workers are only
+  used after everything else, to fill shifts no regular carer can cover. They never take a shift from a regular
+  carer and don't affect regular carers' weekends, run rotation or days off. Their days per week is the most
+  they can be booked; the hard rules (driver, gender, leave, days in a row, can't work with…) still apply.
+  Can be switched off in Settings.
 - **Runs** – add, remove, rename, reorder. Double-up (2 carers) or single (1 carer); male only, female only,
   or either; untick days a run doesn't operate. Runs need a driver unless "Needs a driver" is unticked.
   **Only these carers** limits a run to named people (e.g. a run covered by 3 non-drivers).
@@ -57,6 +63,9 @@ Auto-fill reads the previous 13 weeks of schedules saved in the app (fill weeks 
   hand is flagged red. The flag comes only from what people have actually worked, so nobody is favoured
   by hand. People working a weekend
   are given both days where possible, so others get whole weekends off.
+- **Preferred runs** – carers are put on their preferred runs first, ahead of the run-pair rotation below,
+  and a final step swaps same-day shifts to move them onto them. A carer set to **Only these runs** is never
+  put on any other run (doing it by hand asks for confirmation and is flagged).
 - **Same 2 runs for 3 weeks** – carers are kept on their current pair of runs (e.g. Mon–Wed on Run 2, a day
   off, then Fri–Sat on Run 4) for 3 weeks, then moved to a different pair. Within a week it avoids a 3rd
   different run and keeps runs in blocks of days.
@@ -67,6 +76,14 @@ Auto-fill reads the previous 13 weeks of schedules saved in the app (fill weeks 
 - **2 days off after 6+ in a row** – if a carer ends up working 6 or 7 days in a row for any reason (added by
   hand, or the limit above raised), auto-fill keeps the next 2 days off for them, including into next week.
   Putting them back on sooner is flagged red.
+- **No more days off than the profile allows** – each carer should work their days per week, less any days
+  marked unavailable, on leave or sick. Overtime days are only used when no one else can cover the shift; a
+  final step hands overtime shifts back to anyone still short, and shifts are swapped around so a carer who
+  is short can take over from someone who can cover a gap instead. Anyone still short is shown as a warning
+  ("4 days off – profile allows 2"), and the auto-fill report says whether that is because there are more
+  contracted days than shifts that week.
+- **Weekends are staggered** – only as many people who worked last weekend work this one as still leaves
+  enough people for next weekend, so the weekend-off rule never empties a whole weekend at once.
 - **Days off together** – avoids leaving a single day off sandwiched between working days.
 - **Random, not alphabetical** – runs and carers are shuffled each time, so pressing Auto-fill again gives
   a different version.
