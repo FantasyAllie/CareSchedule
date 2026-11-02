@@ -28,19 +28,23 @@
   th, td { border: 1px solid var(--line); padding: 6px; vertical-align: top; text-align: left; }
   th { background: #eef1f6; font-weight: 600; }
   .grid-wrap { overflow-x: auto; }
-  .grid td.cell { min-width: 150px; }
-  .grid tbody th { min-width: 120px; }
+  /* fixed, equal-width day columns so Monday to Sunday fit the window without scrolling */
+  .grid { table-layout: fixed; min-width: 900px; }
+  .grid col.runcol { width: 104px; }
+  .grid td.cell { padding: 4px; overflow: hidden; }
+  .grid tbody th { font-size: 13px; padding: 4px 6px; overflow-wrap: anywhere; }
+  .grid thead th { padding: 4px 6px; }
   .grid td.cell.err { background: var(--err-bg); }
   .grid td.cell.warn { background: var(--warn-bg); }
   .grid td.cell.off { background: repeating-linear-gradient(45deg, #f0f0f0, #f0f0f0 6px, #e6e6e6 6px, #e6e6e6 12px); color: var(--muted); }
   .slot { display: flex; gap: 4px; align-items: center; margin-bottom: 4px; }
-  .slot select { flex: 1; min-width: 0; font-size: 13px; }
+  .slot select { flex: 1; min-width: 0; width: 100%; font-size: 12px; padding: 3px 2px; text-overflow: ellipsis; }
   .slot.locked select { border-color: var(--lock); box-shadow: 0 0 0 1px var(--lock) inset; }
   .lockbtn { border: none; background: none; cursor: pointer; padding: 0 2px; font-size: 13px; opacity: .45; }
   .slot.locked .lockbtn { opacity: 1; }
   .shadow select { font-style: italic; }
   .linkbtn { border: none; background: none; color: var(--accent); cursor: pointer; padding: 0; font-size: 12px; }
-  .issues { font-size: 12px; margin-top: 2px; }
+  .issues { font-size: 11px; margin-top: 2px; line-height: 1.25; }
   .issues .e { color: var(--err); }
   .issues .w { color: var(--warn); }
   .tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 10px; background: #eef1f6; margin-right: 3px; }
@@ -921,7 +925,7 @@ function viewSchedule() {
       Auto-fill is shuffled each time, so press it again for a different version.
       ${errs ? `<b class="over">${errs} problem(s)</b>` : '<b class="met">No problems</b>'}${warns ? `, <b class="under">${warns} warning(s)</b>` : ''}</div>
     ${ui.report ? `<div class="report panel" style="margin-top:8px">${esc(ui.report)}</div>` : ''}
-    <div class="grid-wrap"><table class="grid"><thead><tr><th>Run</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="grid-wrap"><table class="grid"><colgroup><col class="runcol">${DAYS.map(() => '<col>').join('')}</colgroup><thead><tr><th>Run</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>
   </div>
   <div class="panel">
     <h3 style="margin-top:0">Carer summary – days booked / contracted</h3>
@@ -958,7 +962,9 @@ function carerSelect(run, d, selected, attrs, placeholder) {
     const label = `${c.name} (${c.gender}${c.driver ? ', D' : ''}${c.agency ? ', Agency' : ''})${notes.length ? ' – ' + notes.join(', ') : ''}`;
     return `<option value="${c.id}" ${c.id === selected ? 'selected' : ''}>${esc(label)}</option>`;
   }).join('');
-  return `<select data-action="assign" data-run="${run.id}" data-day="${d}" ${attrs}><option value="">${placeholder || '— empty —'}</option>${opts}</select>`;
+  const chosen = selected && byId(selected);
+  const title = chosen ? `${chosen.name} (${chosen.gender === 'M' ? 'male' : 'female'}, ${chosen.driver ? 'driver' : 'non-driver'}${chosen.agency ? ', agency' : ''})` : '';
+  return `<select data-action="assign" data-run="${run.id}" data-day="${d}" title="${esc(title)}" ${attrs}><option value="">${placeholder || '— empty —'}</option>${opts}</select>`;
 }
 
 function printTable() {
