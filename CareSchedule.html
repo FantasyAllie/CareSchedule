@@ -66,6 +66,13 @@
   table.leavecal .we { background: #f3f4f6; }
   table.leavecal th.short { background: var(--err-bg); color: var(--err); }
   .lv.rq, .lvkey.rq { background: #fef9c3; }
+  .split { border: 1px dashed #94a3b8; border-radius: 6px; padding: 3px; margin-bottom: 4px; background: #f8fafc; }
+  .split .half + .half { border-top: 1px dotted #cbd5e1; margin-top: 3px; padding-top: 3px; }
+  .split .times { display: flex; align-items: center; gap: 2px; font-size: 11px; color: var(--muted); }
+  .split input.t { font-size: 11px; padding: 0 2px; width: 0; flex: 1; min-width: 0; text-align: center; }
+  .split .half.found select { background: #fef08a; border-color: #ca8a04; }
+  .lockbtn.half { font-weight: 700; color: var(--accent); }
+  td.halves input { font-size: 12px; padding: 1px 2px; }
   .slot.found select { background: #fef08a; border-color: #ca8a04; box-shadow: 0 0 0 2px #facc15; }
   .linkbtn.name { color: var(--text); font-size: 14px; text-decoration: underline dotted; }
   .changedbar { margin-top: 8px; padding: 8px 10px; border-radius: 6px; background: var(--warn-bg); border: 1px solid #f5c26b; font-size: 13px; }
@@ -140,6 +147,8 @@
     #print-area .changenote { margin-bottom: 10px; padding: 8px 10px; background: #fffbeb; border: 1px solid #f59e0b; border-radius: 8px; font-size: 13px; }
     #print-area .chg { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 999px; background: #f59e0b; color: #fff; font-size: 11px; font-weight: 700; }
     #print-area .day.changed { background: #fffbeb; } #print-area .day.changed .dname { background: #fef3c7; }
+    #print-area .time { font-size: 10px; font-weight: 600; color: #374151; }
+    #print-area .day .time { font-size: 13px; }
     #print-area .was { font-size: 11px; color: #92400e; margin-top: 3px; }
     #print-area .sheet table { font-size: 14px; }
     #print-area .sheet td, #print-area .sheet th { padding: 8px; }
@@ -269,8 +278,34 @@ function capacity(carer, withOvertime) {
   return Math.min(7, Number(carer.daysPerWeek || 0) + (withOvertime && carer.overtime ? 1 : 0));
 }
 
+// ---- Half days ----
+// A place can be split by hand into parts with their own carer and times: slot.parts = [{ c, from, to, override }, …]
+// (slot.c is then null and the slot is locked, so auto-fill leaves it alone). A whole place is 00:00–24:00.
+const DEFAULT_HALVES = [['07:00', '14:00'], ['14:00', '21:00']];
+function halfTimes(run) { return (run && run.halves) || DEFAULT_HALVES; }
+const toMin = t => { const [h, m] = String(t || '0:0').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+const overlaps = (a, b) => toMin(a.from) < toMin(b.to) && toMin(b.from) < toMin(a.to);
+const timeText = p => `${p.from}–${p.to}`;
+// '7', '730', '7:30', '07.30' -> '07:30' (24-hour); null if not a time
+function normTime(v) {
+  const m = String(v).trim().match(/^(\d{1,2})(?:[:.]?(\d{2}))?$/);
+  if (!m || Number(m[1]) > 24 || Number(m[2] || 0) > 59) return null;
+  return `${m[1].padStart(2, '0')}:${m[2] || '00'}`;
+}
+function slotFilled(sl) { return sl.parts ? sl.parts.every(p => p.c) : !!sl.c; }
+// Everyone on a cell with their times: [{ id, from, to, ref, slot, part, shadow }]
+function cellPeople(cell) {
+  const out = [];
+  cell.slots.forEach((sl, i) => {
+    if (sl.parts) sl.parts.forEach((p, k) => { if (p.c) out.push({ id: p.c, from: p.from, to: p.to, ref: p, slot: i, part: k }); });
+    else if (sl.c) out.push({ id: sl.c, from: '00:00', to: '24:00', ref: sl, slot: i });
+  });
+  if (cell.shadow && cell.shadow.c) out.push({ id: cell.shadow.c, from: '00:00', to: '24:00', ref: cell.shadow, shadow: true });
+  return out;
+}
+
 function cellCarers(cell) {
-  const ids = cell.slots.map(s => s.c).filter(Boolean);
+  const ids = cell.slots.flatMap(s => s.parts ? s.parts.map(p => p.c) : [s.c]).filter(Boolean);
   if (cell.shadow && cell.shadow.c) ids.push(cell.shadow.c);
   return ids;
 }
@@ -447,7 +482,7 @@ function clearUnlocked(state, weekStart) {
     for (let d = 0; d < 7; d++) {
       const cell = getCell(week, run, d);
       for (const s of cell.slots) {
-        if (!s.locked) { s.c = null; s.override = false; }
+        if (!s.locked && !s.parts) { s.c = null; s.override = false; }
       }
       if (cell.shadow.auto) cell.shadow = { c: null, override: false }; // trainee shadows placed by auto-fill
     }
@@ -605,7 +640,7 @@ function autoFill(state, weekStart, opts) {
       if (requested(c, d)) soft -= WEIGHTS.dayOffRequest;
       if (hasPattern(c)) soft += onPattern(c, weekStart, d) ? WEIGHTS.patternDay : -WEIGHTS.offPattern;
       if (prefersRun(c, run)) soft += WEIGHTS.preferredRun;
-      else if (state.runs.some(p => p.days[d] && prefersRun(c, p) && getCell(week, p, d).slots.some(sl => !sl.c))) {
+      else if (state.runs.some(p => p.days[d] && prefersRun(c, p) && getCell(week, p, d).slots.some(sl => !sl.c && !sl.parts))) {
         soft -= WEIGHTS.preferredRun; // their preferred run still has a space today
       }
       else if (r.runs.length) {
@@ -777,11 +812,10 @@ function autoFill(state, weekStart, opts) {
     return fixed;
   }
 
-  const hasDriver = cell => cell.slots.some(s => {
-    const c = s.c && state.carers.find(x => x.id === s.c);
-    return c && c.driver;
-  });
-  const emptyIdx = cell => cell.slots.findIndex(s => !s.c);
+  const isDriver = id => { const c = id && state.carers.find(x => x.id === id); return !!(c && c.driver); };
+  // a split place counts as having a driver only if every part does
+  const hasDriver = cell => cell.slots.some(s => s.parts ? s.parts.every(p => isDriver(p.c)) : isDriver(s.c));
+  const emptyIdx = cell => cell.slots.findIndex(s => !s.c && !s.parts);
 
   function runPass(passNo) {
     const cap = c => capacity(c, passNo === 2 && opts.useOvertime);
@@ -864,7 +898,7 @@ function fillGaps(state, weekStart, opts) {
       for (const sl of getCell(week, run, d).slots) if (sl.c && !sl.locked) { sl.locked = true; unlockedFilled.push(sl); }
     }
   }
-  const empty = () => state.runs.reduce((n, r) => n + r.days.reduce((m, on, d) => m + (on ? getCell(week, r, d).slots.filter(sl => !sl.c).length : 0), 0), 0);
+  const empty = () => state.runs.reduce((n, r) => n + r.days.reduce((m, on, d) => m + (on ? getCell(week, r, d).slots.filter(sl => !sl.c && !sl.parts).length : 0), 0), 0);
   const before = empty();
   let result;
   try { result = autoFill(state, weekStart, opts); } finally { for (const sl of unlockedFilled) sl.locked = false; }
@@ -1145,45 +1179,57 @@ function validate(state, weekStart) {
     list.push({ level, msg: `${run ? run.name : '?'} ${DAYS[d]}: ${msg}` });
   };
 
-  // where each carer is placed per day
+  // where each carer is placed per day, with times: placements[d][id] = [{ runId, from, to }]
   const placements = DAYS.map(() => ({}));
   for (const run of state.runs) {
     for (let d = 0; d < 7; d++) {
       if (!run.days[d]) continue;
-      for (const id of cellCarers(getCell(week, run, d))) {
-        (placements[d][id] || (placements[d][id] = [])).push(run.id);
+      for (const p of cellPeople(getCell(week, run, d))) {
+        (placements[d][p.id] || (placements[d][p.id] = [])).push({ runId: run.id, from: p.from, to: p.to });
       }
     }
   }
+  const doubleBooked = (d, id) => { const l = placements[d][id] || []; return l.some((a, i) => l.slice(i + 1).some(b => overlaps(a, b))); };
 
   for (const run of state.runs) {
     for (let d = 0; d < 7; d++) {
       if (!run.days[d]) continue;
       const cell = getCell(week, run, d);
-      const assigned = cell.slots.filter(s => s.c);
-      const missing = cell.slots.length - assigned.length;
+      const missing = cell.slots.filter(s => !s.c && !s.parts).length;
       if (missing) add(run.id, d, 'error', `${missing} carer(s) needed`);
-      if (needsDriver(run) && assigned.length && !assigned.some(s => byId[s.c] && byId[s.c].driver)) add(run.id, d, 'error', 'No driver');
-      const people = cell.slots.map(s => ({ s, role: '' })).concat(cell.shadow && cell.shadow.c ? [{ s: cell.shadow, role: ' (shadow)' }] : []);
-      people.forEach(({ s }, i) => people.slice(i + 1).forEach(({ s: t }) => {
-        const a = byId[s.c], b = byId[t.c];
-        if (a && b && cantPair(a, b)) {
+      for (const sl of cell.slots) for (const p of sl.parts || []) {
+        if (!p.c) add(run.id, d, 'error', `carer needed ${timeText(p)}`);
+        if (toMin(p.from) >= toMin(p.to)) add(run.id, d, 'warn', `check the times ${timeText(p)}`);
+      }
+      const working = cellPeople(cell).filter(p => !p.shadow);
+      if (needsDriver(run) && working.length) {
+        // a driver must be on for each part of the day that has been split off (or all day if nothing is split)
+        const spans = cell.slots.flatMap(sl => sl.parts || []);
+        const check = spans.length ? spans : [{ from: '00:00', to: '24:00' }];
+        for (const span of check) {
+          if (!working.some(p => byId[p.id] && byId[p.id].driver && overlaps(p, span))) add(run.id, d, 'error', spans.length ? `No driver ${timeText(span)}` : 'No driver');
+        }
+      }
+      const people = cellPeople(cell).map(p => ({ p, s: p.ref, role: p.shadow ? ' (shadow)' : p.part != null ? ` (${timeText(p)})` : '' }));
+      people.forEach(({ p, s }, i) => people.slice(i + 1).forEach(({ p: q, s: t }) => {
+        const a = byId[p.id], b = byId[q.id];
+        if (a && b && overlaps(p, q) && cantPair(a, b)) {
           const over = s.override || t.override;
           add(run.id, d, over ? 'warn' : 'error', `${a.name} and ${b.name} can't work together${over ? ' (overridden)' : ''}`);
         }
       }));
-      for (const { s, role } of people) {
-        if (!s.c) continue;
-        const c = byId[s.c];
+      for (const { p, s, role } of people) {
+        const shadowRole = role === ' (shadow)';
+        const c = byId[p.id];
         if (!c) { add(run.id, d, 'error', 'Unknown carer'); continue; }
         if (!genderOk(run, c)) add(run.id, d, 'error', `${c.name}${role}: run is ${run.gender === 'M' ? 'male' : 'female'} only`);
-        if (!role && inTraining(c, addDays(weekStart, d))) add(run.id, d, 'warn', `${c.name}: trainee until ${ukDate(c.traineeUntil)} – should be shadowing`);
-        if (!role && !preferredOk(run, c)) add(run.id, d, s.override ? 'warn' : 'error', `${c.name}: only works ${preferredNames(c, state.runs)}${s.override ? ' (overridden)' : ''}`);
-        if (!role && !runTypeOk(run, c)) add(run.id, d, s.override ? 'warn' : 'error', `${c.name}: ${runTypesLabel(c).toLowerCase()}${s.override ? ' (overridden)' : ''}`);
-        if (!role && !allowedOk(run, c)) add(run.id, d, s.override ? 'warn' : 'error', `${c.name}: not on this run's carer list${s.override ? ' (overridden)' : ''}`);
+        if (!shadowRole && inTraining(c, addDays(weekStart, d))) add(run.id, d, 'warn', `${c.name}: trainee until ${ukDate(c.traineeUntil)} – should be shadowing`);
+        if (!shadowRole && !preferredOk(run, c)) add(run.id, d, s.override ? 'warn' : 'error', `${c.name}: only works ${preferredNames(c, state.runs)}${s.override ? ' (overridden)' : ''}`);
+        if (!shadowRole && !runTypeOk(run, c)) add(run.id, d, s.override ? 'warn' : 'error', `${c.name}: ${runTypesLabel(c).toLowerCase()}${s.override ? ' (overridden)' : ''}`);
+        if (!shadowRole && !allowedOk(run, c)) add(run.id, d, s.override ? 'warn' : 'error', `${c.name}: not on this run's carer list${s.override ? ' (overridden)' : ''}`);
         const st = carerStatus(c, weekStart, d);
         if (!st.ok) add(run.id, d, s.override ? 'warn' : 'error', `${c.name}${role}: ${st.label}${s.override ? ' (overridden)' : ''}`);
-        if ((placements[d][c.id] || []).length > 1) add(run.id, d, 'error', `${c.name}${role}: double booked on ${DAYS[d]}`);
+        if (doubleBooked(d, c.id)) add(run.id, d, 'error', `${c.name}${role}: double booked on ${DAYS[d]}`);
       }
     }
   }
@@ -1193,11 +1239,18 @@ function validate(state, weekStart) {
   const carers = {};
   for (const c of state.carers) {
     const days = DAYS.map((_, d) => (placements[d][c.id] || []).length > 0);
-    const n = days.filter(Boolean).length;
+    // a half day counts as half towards days per week (any work still counts as a day worked for the other rules)
+    const amount = DAYS.map((_, d) => {
+      const l = placements[d][c.id] || [];
+      if (!l.length) return 0;
+      if (l.some(x => x.from === '00:00' && x.to === '24:00')) return 1;
+      return Math.min(1, l.length * 0.5);
+    });
+    const n = amount.reduce((t, x) => t + x, 0);
     const h = hist[c.id];
     const ws = weekendStreak(h);
-    const runsThisWeek = new Set(DAYS.flatMap((_, d) => placements[d][c.id] || []));
-    carers[c.id] = { days, count: n, contracted: Number(c.daysPerWeek || 0), history: h, weekendStreak: ws, rotation: rotation(h), runsThisWeek };
+    const runsThisWeek = new Set(DAYS.flatMap((_, d) => (placements[d][c.id] || []).map(x => x.runId)));
+    carers[c.id] = { days, amount, count: n, contracted: Number(c.daysPerWeek || 0), history: h, weekendStreak: ws, rotation: rotation(h), runsThisWeek };
     carers[c.id].agency = !!c.agency;
     if (!c.agency && state.settings.weekendRule !== false && (days[5] || days[6])) {
       if (ws >= 2) list.push({ level: 'error', msg: `${c.name}: would be a 3rd weekend in a row – needs this weekend off` });
@@ -1240,7 +1293,10 @@ function weekPlan(state, weekStart) {
       if (!run.days[d]) continue;
       const cell = getCell(week, run, d);
       const mark = (id, v) => { (plan[id] || (plan[id] = DAYS.map(() => null)))[d] = v; };
-      cell.slots.forEach(sl => { if (sl.c) mark(sl.c, run.id); });
+      cell.slots.forEach(sl => {
+        if (sl.c) mark(sl.c, run.id);
+        for (const p of sl.parts || []) if (p.c) mark(p.c, `${run.id}@${timeText(p)}`);
+      });
       if (cell.shadow && cell.shadow.c) mark(cell.shadow.c, 'S:' + run.id);
     }
   }
@@ -1259,8 +1315,8 @@ function changesSinceShared(state, weekStart) {
   const now = weekPlan(state, weekStart), out = [];
   const describe = v => {
     if (!v) return 'Day off';
-    const shadow = v.startsWith('S:'), run = state.runs.find(r => r.id === (shadow ? v.slice(2) : v));
-    return `${run ? run.name : 'a run that was removed'}${shadow ? ' (shadowing)' : ''}`;
+    const shadow = v.startsWith('S:'), [id, time] = (shadow ? v.slice(2) : v).split('@'), run = state.runs.find(r => r.id === id);
+    return `${run ? run.name : 'a run that was removed'}${time ? ' ' + time : ''}${shadow ? ' (shadowing)' : ''}`;
   };
   for (const c of state.carers) {
     const a = shared.plan[c.id] || DAYS.map(() => null), b = now[c.id] || DAYS.map(() => null);
@@ -1326,6 +1382,7 @@ function reportSickness(state, carerId, from, to) {
       for (const run of state.runs) {
         if (!run.days[d]) continue;
         const cell = getCell(state.weeks[ws], run, d);
+        cell.slots.forEach(sl => { for (const p of sl.parts || []) if (p.c === carerId) Object.assign(p, { c: null, override: false }); });
         cell.slots.forEach((sl, idx) => {
           if (sl.c !== carerId) return;
           Object.assign(sl, { c: null, locked: false, override: false });
@@ -1432,7 +1489,7 @@ function stateJson(st) {
       const cells = {};
       for (const [runId, byDay] of Object.entries(w.cells || {})) {
         const days = {};
-        for (const [d, cell] of Object.entries(byDay)) if (cell.slots.some(sl => sl.c) || (cell.shadow && cell.shadow.c)) days[d] = cell;
+        for (const [d, cell] of Object.entries(byDay)) if (cell.slots.some(sl => sl.c || sl.parts) || (cell.shadow && cell.shadow.c)) days[d] = cell;
         if (Object.keys(days).length) cells[runId] = days;
       }
       if (Object.keys(cells).length || w.final) weeks[ws] = Object.assign({}, w, { cells });
@@ -1546,10 +1603,18 @@ function viewSchedule() {
       const cell = getCell(week, run, d);
       const iss = v.cells[run.id + '|' + d] || [];
       const cls = iss.some(i => i.level === 'error') ? 'err' : iss.length ? 'warn' : '';
-      const slots = cell.slots.map((s, i) => `
+      const slots = cell.slots.map((s, i) => s.parts ? `
+        <div class="split">${s.parts.map((p, k) => `
+          <div class="half ${ui.find && p.c === ui.find ? 'found' : ''}">
+            <div class="times"><input type="text" inputmode="numeric" maxlength="5" placeholder="hh:mm" title="24-hour time, e.g. 07:00" class="t" data-action="partTime" data-run="${run.id}" data-day="${d}" data-slot="${i}" data-part="${k}" data-k="from" value="${p.from}" ${off}>–<input type="text" inputmode="numeric" maxlength="5" placeholder="hh:mm" title="24-hour time, e.g. 14:00" class="t" data-action="partTime" data-run="${run.id}" data-day="${d}" data-slot="${i}" data-part="${k}" data-k="to" value="${p.to}" ${off}></div>
+            <div class="slot">${carerSelect(run, d, p.c, `data-slot="${i}" data-part="${k}" ${off}`)}</div>
+          </div>`).join('')}
+          ${final ? '' : `<button class="linkbtn" data-action="unsplit" data-run="${run.id}" data-day="${d}" data-slot="${i}" title="Back to one carer for the whole day">Make whole day</button>`}
+        </div>` : `
         <div class="slot ${s.locked ? 'locked' : ''} ${ui.find && s.c === ui.find ? 'found' : ''}">
           ${carerSelect(run, d, s.c, `data-slot="${i}" ${off}`)}
           <button class="lockbtn" ${off} title="${s.locked ? 'Locked – auto-fill keeps this' : 'Unlocked – auto-fill may change this'}" data-action="lock" data-run="${run.id}" data-day="${d}" data-slot="${i}">${s.locked ? '🔒' : '🔓'}</button>
+          <button class="lockbtn half" ${off} title="Split into two half days with their own times" data-action="split" data-run="${run.id}" data-day="${d}" data-slot="${i}">½</button>
         </div>`).join('');
       const shadow = (cell.shadow.c || cell.shadowOpen)
         ? `<div class="slot shadow ${ui.find && cell.shadow.c === ui.find ? 'found' : ''}">${carerSelect(run, d, cell.shadow.c, `data-slot="shadow" ${off}`, 'Shadow / training')}</div>`
@@ -1583,7 +1648,7 @@ function viewSchedule() {
       ? `${weekendsOff} of ${known.length} weekends off · ${weekendBadge(s.weekendStreak)}<br><span class="muted">${pair}</span>`
       : '<span class="muted">no history yet</span>';
     return `<tr><td><button class="linkbtn name" data-action="carerView" data-id="${c.id}" title="See ${esc(c.name)}'s next few weeks">${esc(c.name)}</button> <span class="tag ${c.gender}">${c.gender}</span><span class="tag ${c.driver ? 'drv' : 'nodrv'}">${c.driver ? 'Driver' : 'Non-driver'}</span>${c.agency ? '<span class="tag agency">Agency</span>' : ''}${traineeTag(c)}${!c.agency && s.weekendStreak >= 2 ? '<span class="tag flag">⚑ Weekend off priority</span>' : ''}</td>
-      <td class="${c.agency ? '' : cls}">${c.agency ? `${s.count} (max ${s.contracted})` : `${s.count} / ${s.contracted}${c.overtime ? ' (+1 OT)' : ''}`}</td>${days}<td>${past}</td></tr>`;
+      <td class="${c.agency ? '' : cls}">${c.agency ? `${halfDaysText(s.count)} (max ${s.contracted})` : `${halfDaysText(s.count)} / ${s.contracted}${c.overtime ? ' (+1 OT)' : ''}`}</td>${days}<td>${past}</td></tr>`;
   };
   const activeCarers = sortedCarers().filter(c => c.active !== false);
   const agencyRows = activeCarers.filter(c => c.agency).map(summaryRow).join('');
@@ -1676,15 +1741,17 @@ function carerViewPanel() {
         const cell = r.days[d] && week.cells[r.id] && week.cells[r.id][d];
         if (!cell) continue;
         if (cell.slots.some(sl => sl.c === c.id)) spot = r.name;
+        const half = cell.slots.flatMap(sl => sl.parts || []).find(p => p.c === c.id);
+        if (half) spot = r.name + ' ' + timeText(half);
         else if (cell.shadow && cell.shadow.c === c.id) spot = r.name + ' (shadow)';
       }
       const l = leaveOn(c, date), rq = requestOn(c, date);
-      if (spot) return `<td>${runPill(spot.replace(' (shadow)', ''), / \(shadow\)/.test(spot))}${rq ? ' <span class="under" title="Asked for this day off">R</span>' : ''}</td>`;
+      if (spot) return `<td>${runPill(spot.replace(/ \(shadow\)| \d\d:\d\d–\d\d:\d\d/, ''), / \(shadow\)/.test(spot))}${/\d\d:\d\d–/.test(spot) ? ` <small>${esc(spot.match(/\d\d:\d\d–\d\d:\d\d/)[0])}</small>` : ''}${rq ? ' <span class="under" title="Asked for this day off">R</span>' : ''}</td>`;
       if (l) return `<td class="lv ${l.type === 'SICK' ? 'sk' : 'al'}">${l.type === 'SICK' ? 'Sick' : 'AL'}</td>`;
       if (rq) return '<td class="lv rq">Request</td>';
       return `<td class="muted">${week ? 'Off' : ''}</td>`;
     }).join('');
-    const count = week ? DAYS.filter((_, d) => state.runs.some(r => { const cell = r.days[d] && week.cells[r.id] && week.cells[r.id][d]; return cell && (cell.slots.some(sl => sl.c === c.id) || (cell.shadow && cell.shadow.c === c.id)); })).length : null;
+    const count = week ? DAYS.filter((_, d) => state.runs.some(r => { const cell = r.days[d] && week.cells[r.id] && week.cells[r.id][d]; return cell && cellCarers(cell).includes(c.id); })).length : null;
     return `<tr><th>w/c ${fmtDate(ws).slice(0, 5)}</th>${cells}<td>${count == null ? '<span class="muted">not planned yet</span>' : count + ' day(s)'}</td></tr>`;
   }).join('');
   return `<div class="panel cover carerview" style="margin-top:8px">
@@ -1742,7 +1809,7 @@ function publishUpdate() {
       <div class="changenote">Your rota for this week has changed. Changed days are marked <span class="chg">Changed</span>.</div>
       <div class="days">${wk.map((x, d) => `<div class="day ${x ? '' : 'off'} ${changed.has(d) ? 'changed' : ''}">
         <div class="dname">${esc(longDate(addDays(ui.week, d), { weekday: 'long' }))}<span>${esc(longDate(addDays(ui.week, d), { day: 'numeric', month: 'long' }))}</span></div>
-        <div class="dbody">${x ? `${runPill(x.run, x.shadow)}${x.with.length ? `<div class="with">Working with ${esc(x.with.join(', '))}</div>` : ''}` : '<span class="offtext">Day off</span>'}
+        <div class="dbody">${x ? `${shiftPills(x)}${x.with.length ? `<div class="with">Working with ${esc(x.with.join(', '))}</div>` : ''}` : '<span class="offtext">Day off</span>'}
           ${changed.has(d) ? `<span class="chg">Changed</span><div class="was">was: ${esc(ch.find(y => y.carer.id === id && y.d === d).was.replace(/Day off/, 'day off'))}</div>` : ''}</div>
       </div>`).join('')}</div>
       ${pubFooter()}
@@ -1870,8 +1937,10 @@ function openShifts() {
   const week = getWeek(state, ui.week), out = [];
   for (let d = 0; d < 7; d++) for (const r of state.runs) {
     if (!r.days[d]) continue;
-    const open = getCell(week, r, d).slots.filter(sl => !sl.c).length;
-    if (open) out.push({ d, run: r.name, open, note: r.gender === 'F' ? 'female carers' : r.gender === 'M' ? 'male carers' : '' });
+    const cell = getCell(week, r, d), note = r.gender === 'F' ? 'female carers' : r.gender === 'M' ? 'male carers' : '';
+    const open = cell.slots.filter(sl => !sl.c && !sl.parts).length;
+    if (open) out.push({ d, run: r.name, open, note });
+    for (const sl of cell.slots) for (const p of sl.parts || []) if (!p.c) out.push({ d, run: `${r.name} ${timeText(p)}`, open: 1, note });
   }
   return out;
 }
@@ -1880,8 +1949,8 @@ function publishTeam() {
   const people = sortedCarers().filter(c => c.active !== false).map(c => ({ c, wk: carerWeek(c) })).filter(x => !x.c.agency || x.wk.some(Boolean));
   const head = DAYS.map((d, i) => `<th>${d}<span>${esc(longDate(addDays(ui.week, i), { day: 'numeric', month: 'short' }))}</span></th>`).join('');
   const rows = people.map(({ c, wk }) => `<tr><th>${esc(c.name)}</th>${wk.map(x => x
-    ? `<td>${runPill(x.run, x.shadow)}${x.with.length ? `<div class="with">with ${esc(x.with.join(', '))}</div>` : ''}</td>`
-    : '<td class="off">Day off</td>').join('')}<td class="n">${wk.filter(Boolean).length}</td></tr>`).join('');
+    ? `<td>${shiftPills(x)}${x.with.length ? `<div class="with">with ${esc(x.with.join(', '))}</div>` : ''}</td>`
+    : '<td class="off">Day off</td>').join('')}<td class="n">${weekDaysWorked(wk)}</td></tr>`).join('');
   const open = openShifts();
   return `<div class="pub team">
     ${pubHeader('Team rota', weekTitle())}
@@ -1894,14 +1963,14 @@ function publishTeam() {
 
 function publishSheets() {
   const pages = sortedCarers().filter(c => c.active !== false).map(c => ({ c, wk: carerWeek(c) })).filter(x => x.wk.some(Boolean)).map(({ c, wk }) => {
-    const runs = [...new Set(wk.filter(Boolean).map(x => x.run))];
+    const runs = [...new Set(wk.filter(Boolean).flatMap(x => x.shifts.map(sh => sh.run)))];
     return `<section class="pub sheet">
       ${pubHeader(c.name, `Your rota · ${weekTitle()}`)}
       <div class="days">${wk.map((x, d) => `<div class="day ${x ? '' : 'off'}">
         <div class="dname">${esc(longDate(addDays(ui.week, d), { weekday: 'long' }))}<span>${esc(longDate(addDays(ui.week, d), { day: 'numeric', month: 'long' }))}</span></div>
-        <div class="dbody">${x ? `${runPill(x.run, x.shadow)}${x.with.length ? `<div class="with">Working with ${esc(x.with.join(', '))}</div>` : ''}` : '<span class="offtext">Day off</span>'}</div>
+        <div class="dbody">${x ? `${shiftPills(x)}${x.with.length ? `<div class="with">Working with ${esc(x.with.join(', '))}</div>` : ''}` : '<span class="offtext">Day off</span>'}</div>
       </div>`).join('')}</div>
-      <div class="summary"><b>${wk.filter(Boolean).length}</b> day(s) working this week · ${runs.map(r => runPill(r)).join(' ')}</div>
+      <div class="summary"><b>${weekDaysWorked(wk)}</b> day(s) working this week · ${runs.map(r => runPill(r)).join(' ')}</div>
       ${pubFooter()}
     </section>`;
   }).join('');
@@ -1912,16 +1981,32 @@ function publishSheets() {
 function carerWeek(c) {
   const week = getWeek(state, ui.week);
   return DAYS.map((_, d) => {
+    const shifts = [];
     for (const r of state.runs) {
       if (!r.days[d]) continue;
-      const cell = getCell(week, r, d);
-      const ids = cell.slots.map(s => s.c);
-      if (ids.includes(c.id) || cell.shadow.c === c.id) {
-        return { run: r.name, shadow: cell.shadow.c === c.id, with: cellIds(cell).filter(id => id !== c.id).map(id => (byId(id) || {}).name).filter(Boolean) };
+      const people = cellPeople(getCell(week, r, d));
+      for (const me of people.filter(p => p.id === c.id)) {
+        const others = people.filter(p => p.id !== c.id && overlaps(p, me)).map(p => (byId(p.id) || {}).name).filter(Boolean);
+        shifts.push({ run: r.name, shadow: !!me.shadow, time: me.part != null ? timeText(me) : null, with: others });
       }
     }
-    return null;
+    if (!shifts.length) return null;
+    shifts.sort((a, b) => toMin((a.time || '00:00').slice(0, 5)) - toMin((b.time || '00:00').slice(0, 5)));
+    return { shifts, run: shifts.map(x => x.run).join(' + '), shadow: shifts.every(x => x.shadow), with: [...new Set(shifts.flatMap(x => x.with))] };
   });
+}
+
+// One day's shifts as pills (PDFs) or text (office printouts), with times for half days.
+// days worked shown with halves: a day of only half-day shifts counts ½ per half
+function dayAmount(x) { return !x ? 0 : x.shifts.some(sh => !sh.time) ? 1 : Math.min(1, x.shifts.length * 0.5); }
+function halfDaysText(n) { return n % 1 ? `${Math.floor(n) || ''}½` : String(n); }
+function weekDaysWorked(wk) { return halfDaysText(wk.reduce((t, x) => t + dayAmount(x), 0)); }
+
+function shiftPills(x) {
+  return x.shifts.map(sh => `${runPill(sh.run, sh.shadow)}${sh.time ? ` <span class="time">${esc(sh.time)}</span>` : ''}`).join('<br>');
+}
+function shiftText(x) {
+  return x.shifts.map(sh => `<b>${esc(sh.run)}</b>${sh.time ? ` ${esc(sh.time)}` : ''}${sh.shadow ? ' (shadow)' : ''}`).join('<br>');
 }
 
 function offLabel(c, d) {
@@ -1934,7 +2019,7 @@ function printCarerRota() {
     const wk = carerWeek(c);
     if (c.agency && !wk.some(Boolean)) return '';
     return `<tr><th>${esc(c.name)}${c.agency ? ' (agency)' : ''}</th>${wk.map((x, d) => x
-      ? `<td><b>${esc(x.run)}</b>${x.shadow ? ' (shadow)' : ''}${x.with.length ? `<br><small>with ${esc(x.with.join(', '))}</small>` : ''}</td>`
+      ? `<td>${shiftText(x)}${x.with.length ? `<br><small>with ${esc(x.with.join(', '))}</small>` : ''}</td>`
       : `<td class="muted">${esc(offLabel(c, d))}</td>`).join('')}</tr>`;
   }).join('');
   return `<h2>Carer rota – week commencing ${fmtDate(ui.week)}</h2>
@@ -1945,10 +2030,10 @@ function printCarerSheets() {
   return sortedCarers().filter(c => c.active !== false).map(c => ({ c, wk: carerWeek(c) })).filter(x => x.wk.some(Boolean)).map(({ c, wk }) => `
     <section class="sheet">
       <h2>${esc(c.name)} – week commencing ${fmtDate(ui.week)}</h2>
-      <p>${wk.filter(Boolean).length} day(s) working</p>
+      <p>${weekDaysWorked(wk)} day(s) working</p>
       <table><thead><tr><th>Day</th><th>Date</th><th>Run</th><th>Working with</th></tr></thead><tbody>
       ${wk.map((x, d) => `<tr><td>${DAYS[d]}</td><td>${fmtDate(addDays(ui.week, d))}</td>
-        ${x ? `<td><b>${esc(x.run)}</b>${x.shadow ? ' (shadow / training)' : ''}</td><td>${esc(x.with.join(', ') || '—')}</td>` : `<td colspan="2" class="muted">${esc(offLabel(c, d))}</td>`}</tr>`).join('')}
+        ${x ? `<td>${shiftText(x)}</td><td>${esc(x.with.join(', ') || '—')}</td>` : `<td colspan="2" class="muted">${esc(offLabel(c, d))}</td>`}</tr>`).join('')}
       </tbody></table>
     </section>`).join('') || '<p>No one is on the schedule this week.</p>';
 }
@@ -1959,21 +2044,23 @@ function printTable() {
   const rows = state.runs.map(run => `<tr><th>${esc(run.name)}</th>${DAYS.map((_, d) => {
     if (!run.days[d]) return '<td>—</td>';
     const cell = getCell(week, run, d);
-    const people = cell.slots.map(s => esc(name(s.c) || '[OPEN]')).join('<br>');
+    const people = cell.slots.map(s => s.parts ? s.parts.map(p => `${esc(name(p.c) || '[OPEN]')} <small>${esc(timeText(p))}</small>`).join('<br>') : esc(name(s.c) || '[OPEN]')).join('<br>');
     return `<td>${people}${cell.shadow.c ? `<br><i>Shadow: ${esc(name(cell.shadow.c))}</i>` : ''}</td>`;
   }).join('')}</tr>`).join('');
   return `<h2>Schedule – week commencing ${fmtDate(ui.week)}</h2>
     <table><thead><tr><th>Run</th>${DAYS.map((d, i) => `<th>${d} ${fmtDate(addDays(ui.week, i)).slice(0, 5)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
 }
 
-function assign(runId, d, slot, carerId) {
+function assign(runId, d, slot, carerId, part) {
   const run = runById(runId);
   const week = getWeek(state, ui.week);
   const cell = getCell(week, run, d);
-  const target = slot === 'shadow' ? cell.shadow : cell.slots[Number(slot)];
+  const isPart = part != null && part !== '';
+  const target = slot === 'shadow' ? cell.shadow : isPart ? cell.slots[Number(slot)].parts[Number(part)] : cell.slots[Number(slot)];
+  const span = isPart ? { from: target.from, to: target.to } : { from: '00:00', to: '24:00' };
   if (!carerId) {
     target.c = null; target.override = false;
-    if (slot !== 'shadow') target.locked = false;
+    if (slot !== 'shadow' && !isPart) target.locked = false;
     return true;
   }
   const c = byId(carerId);
@@ -1984,7 +2071,7 @@ function assign(runId, d, slot, carerId) {
     override = true;
   }
   if (!genderOk(run, c) && !confirm(`${run.name} is ${genderLabel(run.gender).toLowerCase()}. Assign ${c.name} anyway?`)) return false;
-  const others = cellIds(cell).filter(id => id !== target.c).map(byId).filter(Boolean);
+  const others = cellPeople(cell).filter(p => p.ref !== target && overlaps(p, span)).map(p => byId(p.id)).filter(Boolean);
   const clash = others.find(o => cantPair(c, o));
   if (clash) {
     if (!confirm(`${c.name} and ${clash.name} are set to not work together. Put them on ${run.name} together anyway?`)) return false;
@@ -2002,21 +2089,18 @@ function assign(runId, d, slot, carerId) {
     if (!confirm(`${c.name} is not one of ${run.name}'s named carers. Assign them anyway?`)) return false;
     override = true;
   }
-  // prevent double booking: offer to move them
+  // prevent double booking (at overlapping times): offer to move them
   for (const r of state.runs) {
     if (!r.days[d]) continue;
-    const other = getCell(week, r, d);
-    const spots = other.slots.concat([other.shadow]);
-    for (const s of spots) {
-      if (s.c === carerId && s !== target) {
-        if (!confirm(`${c.name} is already on ${r.name} on ${DAYS[d]}. Move them here?`)) return false;
-        s.c = null; s.override = false; if ('locked' in s) s.locked = false;
-      }
+    for (const p of cellPeople(getCell(week, r, d))) {
+      if (p.id !== carerId || p.ref === target || !overlaps(p, span)) continue;
+      if (!confirm(`${c.name} is already on ${r.name}${p.part != null ? ' ' + timeText(p) : ''} on ${DAYS[d]}. Move them here?`)) return false;
+      p.ref.c = null; p.ref.override = false; if ('locked' in p.ref && p.part == null) p.ref.locked = false;
     }
   }
   target.c = carerId; target.override = override;
   if (slot === 'shadow') delete target.auto; // chosen by hand – auto-fill keeps it
-  if (slot !== 'shadow') target.locked = true;
+  if (slot !== 'shadow' && !isPart) target.locked = true;
   return true;
 }
 
@@ -2029,7 +2113,7 @@ function exportCsv() {
     lines.push([run.name, ...DAYS.map((_, d) => {
       if (!run.days[d]) return '-';
       const cell = getCell(week, run, d);
-      return cell.slots.map(s => name(s.c) || '[OPEN]').join(' + ') + (cell.shadow.c ? ` + shadow: ${name(cell.shadow.c)}` : '');
+      return cell.slots.map(s => s.parts ? s.parts.map(p => `${name(p.c) || '[OPEN]'} ${timeText(p)}`).join(' / ') : name(s.c) || '[OPEN]').join(' + ') + (cell.shadow.c ? ` + shadow: ${name(cell.shadow.c)}` : '');
     })].map(q).join(','));
   }
   download(`schedule-${ui.week}.csv`, lines.join('\r\n'), 'text/csv');
@@ -2387,6 +2471,8 @@ function viewRuns() {
         ${sortedCarers().map(c => `<label style="display:block"><input type="checkbox" data-action="runAllowed" data-id="${r.id}" data-c="${c.id}" ${(r.allowed || []).includes(c.id) ? 'checked' : ''}> ${esc(c.name)} (${c.gender}${c.driver ? ', D' : ''})</label>`).join('')}
       </details></td>
       <td class="days">${DAYS.map((d, j) => `<label><input type="checkbox" data-action="runDay" data-id="${r.id}" data-i="${j}" ${r.days[j] ? 'checked' : ''}>${d}</label>`).join('')}</td>
+      <td class="halves" title="Times used when a place on this run is split into half days (each split can still be changed)">${halfTimes(r).map((h, k) =>
+        `<div>${k ? 'PM' : 'AM'} <input type="time" data-action="runHalf" data-id="${r.id}" data-k="${k},0" value="${h[0]}">–<input type="time" data-action="runHalf" data-id="${r.id}" data-k="${k},1" value="${h[1]}"></div>`).join('')}</td>
       <td style="white-space:nowrap">
         <button class="btn" data-action="runUp" data-i="${i}" ${i === 0 ? 'disabled' : ''}>▲</button>
         <button class="btn" data-action="runDown" data-i="${i}" ${i === state.runs.length - 1 ? 'disabled' : ''}>▼</button>
@@ -2398,8 +2484,8 @@ function viewRuns() {
       <button class="btn primary" data-action="newRun">+ Add run</button></div>
     <p class="muted" style="margin-top:0">Changes save automatically. Untick a day if the run doesn't operate that day.
       Use "Only these carers" to limit a run to named carers – those runs are filled first, and their carers are kept for them.</p>
-    <table><thead><tr><th>Name</th><th>Type</th><th>Gender</th><th>Driver</th><th>Only these carers</th><th>Operates</th><th></th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="7" class="muted">No runs yet.</td></tr>'}</tbody></table>
+    <table><thead><tr><th>Name</th><th>Type</th><th>Gender</th><th>Driver</th><th>Only these carers</th><th>Operates</th><th>Half-day times</th><th></th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="8" class="muted">No runs yet.</td></tr>'}</tbody></table>
   </div>`;
 }
 
@@ -2658,6 +2744,22 @@ document.getElementById('app').addEventListener('click', e => {
       state.weeks[ui.week] = copy; ui.report = 'Copied previous week. Check the highlighted cells for leave/sickness this week.';
       break;
     }
+    case 'split': {
+      if (week.final) return;
+      const run = runById(b.dataset.run), cell = getCell(week, run, Number(b.dataset.day)), i = Number(b.dataset.slot);
+      const [[a1, a2], [p1, p2]] = halfTimes(run);
+      cell.slots[i] = { c: null, locked: true, override: false, parts: [
+        { c: cell.slots[i].c, from: a1, to: a2, override: cell.slots[i].override || false }, { c: null, from: p1, to: p2, override: false }] };
+      break;
+    }
+    case 'unsplit': {
+      if (week.final) return;
+      const run = runById(b.dataset.run), cell = getCell(week, run, Number(b.dataset.day)), i = Number(b.dataset.slot);
+      const keep = cell.slots[i].parts.find(p => p.c);
+      if (cell.slots[i].parts.filter(p => p.c).length > 1 && !confirm(`Make this a whole day for ${(byId(keep.c) || {}).name}? The other half's carer will be taken off.`)) return;
+      cell.slots[i] = { c: keep ? keep.c : null, locked: !!keep, override: false };
+      break;
+    }
     case 'lock': { if (week.final) return; const s = getCell(week, runById(b.dataset.run), Number(b.dataset.day)).slots[Number(b.dataset.slot)]; s.locked = !s.locked; break; }
     case 'shadow': getCell(week, runById(b.dataset.run), Number(b.dataset.day)).shadowOpen = true; break;
     case 'findCover': {
@@ -2768,7 +2870,10 @@ document.getElementById('app').addEventListener('click', e => {
       for (const r of state.runs) if (r.allowed) r.allowed = r.allowed.filter(id => id !== c.id);
       for (const o of state.carers) if (o.notWith) o.notWith = o.notWith.filter(id => id !== c.id);
       for (const w of Object.values(state.weeks)) for (const byDay of Object.values(w.cells)) for (const cell of Object.values(byDay)) {
-        for (const s of cell.slots) if (s.c === c.id) { s.c = null; s.locked = false; }
+        for (const s of cell.slots) {
+          if (s.c === c.id) { s.c = null; s.locked = false; }
+          for (const p of s.parts || []) if (p.c === c.id) p.c = null;
+        }
         if (cell.shadow && cell.shadow.c === c.id) cell.shadow.c = null;
       }
       break;
@@ -2841,8 +2946,18 @@ document.getElementById('app').addEventListener('change', e => {
   const t = e.target;
   const a = t.dataset.action;
   if (a === 'assign') {
-    assign(t.dataset.run, Number(t.dataset.day), t.dataset.slot, t.value);
+    assign(t.dataset.run, Number(t.dataset.day), t.dataset.slot, t.value, t.dataset.part);
     ui.report = null;
+  } else if (a === 'partTime') {
+    const cell = getCell(getWeek(state, ui.week), runById(t.dataset.run), Number(t.dataset.day));
+    const v = normTime(t.value);
+    if (!v) { alert('Please type a 24-hour time, e.g. 07:00 or 14:30.'); render(); return; }
+    cell.slots[Number(t.dataset.slot)].parts[Number(t.dataset.part)][t.dataset.k] = v;
+  } else if (a === 'runHalf') {
+    const r = runById(t.dataset.id), h = JSON.parse(JSON.stringify(halfTimes(r)));
+    const [k, j] = t.dataset.k.split(',').map(Number);
+    if (t.value) h[k][j] = t.value;
+    r.halves = h;
   } else if (a === 'runField') {
     const r = runById(t.dataset.id);
     r[t.dataset.f] = t.dataset.f === 'name' ? (t.value.trim() || r.name) : t.value;

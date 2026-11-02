@@ -84,6 +84,14 @@ in the same browser, otherwise the browser treats it as a fresh copy.
 - **Finalise week** – once a week is done, **✔ Finalise week** switches off Auto-fill, Fill gaps only,
   clearing and editing for it, so it can't be changed by accident (the weekend and days-in-a-row rules rely
   on past weeks being right). Sickness cover still works on a finalised week. **Reopen week** undoes it.
+- **Half days** – the **½** button on any place on the Schedule splits it into two parts, each with its own carer and
+  its own start and finish times (24-hour, e.g. 07:00–14:00 and 14:00–21:00 – type 730 for 07:30). The times start
+  from the run's *Half-day times* on the Runs page and can be changed on each split. Split places are by hand only:
+  auto-fill never creates or changes them. A half day counts as **half a day** towards days per week, and as a day
+  worked for the days-in-a-row and weekend rules. Rules are checked by time: a driver must be on for each part, a
+  carer can do a morning on one run and an afternoon on another (overlapping times are flagged as double booked), and
+  "can't work with", gender and leave are checked for whoever is on at the same time. Printouts, PDFs, the carer view
+  and change notices show the times. *Make whole day* undoes a split.
 - **Day-off requests** – add one as a leave type ("Day-off request") on the Leave page or the carer's page. Unlike
   leave it isn't a hard block: auto-fill avoids the day wherever cover allows, and if it can't, the day is flagged
   amber ("asked for Wed off") and the auto-fill report says how many requests couldn't be met.
