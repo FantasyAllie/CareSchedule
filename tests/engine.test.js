@@ -321,6 +321,181 @@ test('agency staff only fill gaps and never change the regular carers\' shifts',
   for (let i = 0; i < 10; i++) assert.strictEqual(E.autoFill(s, WEEK, { random: seeded(i) }).issues.carers.AG.count, 0);
 });
 
+test('sickness: carer is taken off their shifts and cover suggestions follow the rules', () => {
+  const s = E.newState();
+  s.carers = [carer('SICK', 'F', true, 5), carer('ND', 'F', false, 5), carer('D1', 'F', true, 5), carer('D2', 'F', true, 5),
+    carer('MAN', 'M', true, 5), carer('BUSY', 'F', true, 5), carer('AG', 'F', true, 5, { agency: true }),
+    carer('NOTWITH', 'F', true, 5, { notWith: ['ND'] })];
+  s.runs = [run('R1', 'double', 'F'), run('R2', 'single')];
+  const w = E.getWeek(s, WEEK);
+  const put = (r, d, i, c) => { E.getCell(w, s.runs[r], d).slots[i] = { c, locked: true, override: false }; };
+  put(0, 2, 0, 'SICK'); put(0, 2, 1, 'ND');   // Wed R1: SICK (driver) + ND
+  put(1, 2, 0, 'BUSY');                       // BUSY already working Wed
+  put(1, 0, 0, 'D1'); put(1, 1, 0, 'D1'); put(1, 3, 0, 'D1'); put(1, 4, 0, 'D1'); put(1, 5, 0, 'D1'); // D1 on 5 days already
+  put(1, 6, 0, 'D2');                         // D2 one day in
+
+  const emptied = E.reportSickness(s, 'SICK', E.addDays(WEEK, 2), E.addDays(WEEK, 2));
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(emptied)), [{ week: WEEK, runId: 'R1', d: 2, idx: 0 }]);
+  assert(s.carers[0].leave.some(l => l.type === 'SICK'));
+
+  const { ok, no } = E.suggestCover(s, WEEK, 'R1', 2, 0);
+  const okIds = ok.map(x => x.carer.id), why = Object.fromEntries(no.map(x => [x.carer.id, x.reason]));
+  assert(!okIds.includes('SICK') && /Sickness/.test(why.SICK), why.SICK);
+  assert(!okIds.includes('ND') && !okIds.includes('BUSY'), 'already working that day');
+  assert(!okIds.includes('MAN') && /female only/.test(why.MAN), why.MAN);
+  assert(!okIds.includes('NOTWITH') && /can't work together/.test(why.NOTWITH), why.NOTWITH);
+  assert(!okIds.includes('D1') && /days in a row/.test(why.D1), why.D1);   // would be a 6th day in a row
+  assert.strictEqual(okIds[0], 'D2', `best cover should be D2, got ${okIds}`);
+  assert.strictEqual(okIds[okIds.length - 1], 'AG', 'agency last');
+  assert(ok[0].notes.some(n => /short/.test(n)));
+});
+
+test('fill gaps only: empty slots are filled and nobody already placed is moved', () => {
+  for (let i = 0; i < 10; i++) {
+    const s = rosterState();
+    E.autoFill(s, WEEK, { random: seeded(900 + i) });
+    const week = E.getWeek(s, WEEK);
+    // empty a few slots, as if people were taken off by hand
+    const emptied = [[0, 1, 0], [3, 4, 0], [1, 6, 1], [2, 2, 1]];
+    for (const [r, d, k] of emptied) E.getCell(week, s.runs[r], d).slots[k] = { c: null, locked: false, override: false };
+    const before = JSON.stringify(s.runs.map(r => [0, 1, 2, 3, 4, 5, 6].map(d => E.getCell(week, r, d).slots.map(x => [x.c, x.locked]))));
+    const res = E.fillGaps(s, WEEK, { random: seeded(950 + i) });
+    check(s);
+    s.runs.forEach((r, ri) => [0, 1, 2, 3, 4, 5, 6].forEach(d => E.getCell(week, r, d).slots.forEach((x, k) => {
+      const was = JSON.parse(before)[ri][d][k];
+      if (was[0]) assert.deepStrictEqual([x.c, x.locked], was, `${r.id} day ${d} slot ${k} changed`);
+    })));
+    assert.strictEqual(res.filled, emptied.length, `filled ${res.filled}`);
+    assert(/Filled \d+ of 4 empty slot/.test(res.log[0]), res.log[0]);
+  }
+});
+
+test('a finalised week is never changed by auto-fill or fill gaps', () => {
+  const s = rosterState();
+  E.autoFill(s, WEEK, { random: seeded(1) });
+  const week = E.getWeek(s, WEEK);
+  E.getCell(week, s.runs[0], 0).slots[0] = { c: null, locked: false, override: false };
+  week.final = true;
+  const before = JSON.stringify(week);
+  assert(E.autoFill(s, WEEK, { random: seeded(2) }).finalised);
+  assert.strictEqual(E.fillGaps(s, WEEK, { random: seeded(3) }).filled, 0);
+  assert.strictEqual(JSON.stringify(week), before);
+});
+
+test('carer spreadsheet: import adds, updates, skips examples and explains bad rows; export round-trips', () => {
+  const s = E.newState();
+  s.runs = [run('R1', 'double'), Object.assign(run('R2', 'single'), { name: 'Run 2' })];
+  s.carers = [carer('A', 'F', true, 5, { name: 'Amy Old' })];
+  const H = E.CARER_COLUMNS.map(c => c.head);
+  const rows = [H,
+    ['Example: Jane Smith', 'F', 'Yes', 5, 'No', 'Both', 'All', 'No', '', 'No', '', ''],
+    ['amy old', '', 'No', 4, '', 'Doubles', 'Mon-Thu', '', 'Run 2; Run 9', 'Yes', 'Bob New', 'updated'],
+    ['Bob New', 'Male', 'yes', '5', 'Y', '', 'Sat Sun Mon', 'no', '', '', '', ''],
+    ['Bad Gender', 'X', 'Yes', 5, '', '', '', '', '', '', '', ''],
+    ['Bad Days', 'F', 'Yes', 9, '', '', 'Funday', '', '', '', '', ''],
+    ['No Gender', '', 'Yes', 5, '', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', '', '', '', '', ''],
+  ];
+  const plan = E.planCarerImport(s, rows);
+  assert.strictEqual(plan.skipped, 1);
+  assert.strictEqual(plan.add.map(c => c.name).join(), 'Bob New');
+  assert.strictEqual(plan.update.map(u => u.name).join(), 'Amy Old');
+  assert(/driver.*days per week.*can go on/.test(plan.update[0].labels.join()), plan.update[0].labels.join());
+  assert.strictEqual(plan.errors.length, 3, plan.errors.join('\n'));
+  assert(/Row 5 \(Bad Gender\): Gender must be M or F/.test(plan.errors[0]));
+  assert(/Row 6 \(Bad Days\): Days per week must be a whole number 0–7.*Days they can work not understood/.test(plan.errors[1]), plan.errors[1]);
+  assert(/Row 7 \(No Gender\): Gender is needed/.test(plan.errors[2]));
+  assert(plan.warnings.some(w => /Row 3: no run called "Run 9"/.test(w)), plan.warnings.join('\n'));
+  E.applyCarerImport(s, plan);
+  const amy = s.carers.find(c => c.id === 'A'), bob = s.carers.find(c => c.name === 'Bob New');
+  assert.strictEqual(amy.gender, 'F', 'blank cell keeps the current value');
+  assert(!amy.driver && amy.daysPerWeek === 4 && amy.runTypes === 'double' && amy.onlyPreferred && amy.notes === 'updated');
+  assert.strictEqual(amy.available.join(), [true, true, true, true, false, false, false].join());
+  assert.strictEqual(amy.preferredRuns.join(), 'R2');
+  assert(bob.gender === 'M' && bob.driver && bob.overtime && !bob.agency);
+  assert.strictEqual(bob.available.join(), [true, false, false, false, false, true, true].join());
+  assert(E.cantPair(amy, bob) && E.cantPair(bob, amy), "can't work with applies both ways");
+  // export then re-import: only updates, and nothing changes
+  const snapshot = JSON.stringify(E.carersToRows(s));
+  const again = E.planCarerImport(s, E.carersToRows(s));
+  assert.strictEqual(again.add.length + again.update.length + again.errors.length + again.warnings.length, 0, JSON.stringify(again));
+  assert.strictEqual(again.unchanged, 2);
+  E.applyCarerImport(s, again);
+  assert.strictEqual(s.carers.length, 2);
+  assert.strictEqual(JSON.stringify(E.carersToRows(s)), snapshot);
+});
+
+test('trainees only shadow experienced carers until their date, then work normally', () => {
+  for (let i = 0; i < 8; i++) {
+    const s = rosterState();
+    const wed = E.addDays(WEEK, 2);
+    s.carers.push(carer('T', 'F', true, 5, { traineeUntil: wed }));
+    E.autoFill(s, WEEK, { random: seeded(1100 + i) });
+    check(s);
+    const week = E.getWeek(s, WEEK);
+    let shadowDays = 0, normalDays = 0;
+    for (const r of s.runs) for (let d = 0; d < 7; d++) {
+      const cell = E.getCell(week, r, d);
+      if (cell.slots.some(x => x.c === 'T')) { normalDays++; assert(d > 2, `trainee in a normal slot on day ${d}`); }
+      if (cell.shadow.c === 'T') {
+        shadowDays++;
+        assert(d <= 2, `trainee still shadowing after their date (day ${d})`);
+        assert(cell.slots.some(x => x.c && x.c !== 'T' && !s.carers.find(c => c.id === x.c).traineeUntil), 'shadowing with no experienced carer');
+        assert(cell.shadow.auto);
+      }
+    }
+    assert(shadowDays >= 1, 'trainee was never put on a shadow shift');
+    assert(shadowDays + normalDays <= 5);
+    // re-running auto-fill replaces auto shadows, but keeps one chosen by hand
+    const manual = E.getCell(week, s.runs[0], 6);
+    manual.shadow = { c: 'M3', override: false };
+    E.autoFill(s, WEEK, { random: seeded(1200 + i) });
+    assert.strictEqual(E.getCell(week, s.runs[0], 6).shadow.c, 'M3');
+  }
+});
+
+test('plan several weeks: fills in order and skips finalised weeks', () => {
+  const s = rosterState();
+  E.autoFill(s, E.addDays(WEEK, 7), { random: seeded(5) });
+  E.getWeek(s, E.addDays(WEEK, 7)).final = true;
+  const before = JSON.stringify(E.getWeek(s, E.addDays(WEEK, 7)));
+  const res = E.autoFillWeeks(s, WEEK, 4, { random: seeded(6) });
+  assert.strictEqual(res.map(r => r.finalised ? 'F' : 'x').join(''), 'xFxx');
+  assert.strictEqual(JSON.stringify(E.getWeek(s, E.addDays(WEEK, 7))), before);
+  for (const k of [0, 2, 3]) assert(Object.keys(E.getWeek(s, E.addDays(WEEK, 7 * k)).cells).length > 0);
+  check(s);
+});
+
+test('leave planner warns when leave would leave too few carers, drivers or women', () => {
+  const s = E.newState();
+  s.carers = [carer('D1', 'F', true, 7), carer('D2', 'M', true, 7), carer('N1', 'F', false, 7), carer('N2', 'F', false, 7)];
+  s.runs = [run('R1', 'double', 'F'), run('R2', 'single')];
+  const ok = E.leaveImpact(s, 'N2', WEEK, WEEK);           // N2 off: 3 people for 3 shifts, D2 still drives R2
+  assert.strictEqual(ok.problemDays, 0, JSON.stringify(ok.days));
+  const bad = E.leaveImpact(s, 'D1', WEEK, E.addDays(WEEK, 1)); // D1 off: one driver left for two runs
+  assert.strictEqual(bad.days.length, 2);
+  assert.strictEqual(bad.problemDays, 2);
+  const msgs = bad.days[0].short.join(' | ');
+  assert.strictEqual(msgs, 'about 1 drivers for 2 runs needing one');
+  assert.strictEqual(s.carers[0].leave.length, 0, 'checking leave must not add it');
+});
+
+test('fairness report counts days, weekends, overtime, shortfalls and leave', () => {
+  const s = E.newState();
+  s.carers = [carer('A', 'F', true, 3, { leave: [{ type: 'SICK', from: E.addDays(WEEK, 7), to: E.addDays(WEEK, 8) }] }), carer('B', 'F', true, 2)];
+  s.runs = [run('S', 'single')];
+  const put = (wk, d, c) => { E.getCell(E.getWeek(s, E.addDays(WEEK, 7 * wk)), s.runs[0], d).slots[0] = { c, locked: true, override: false }; };
+  [0, 1, 5, 6].forEach(d => put(0, d, 'A'));    // week 1: A 4 days (1 overtime), weekend
+  [2, 3].forEach(d => put(0, d, 'B'));
+  [5].forEach(d => put(1, d, 'A'));             // week 2: A 1 day (sick Mon-Tue, due 3 -> 2 short), weekend
+  [0, 1].forEach(d => put(1, d, 'B'));
+  const rep = E.fairnessReport(s, E.addDays(WEEK, 7), 4);
+  assert.strictEqual(rep.weeks.length, 2);
+  const a = rep.rows.find(r => r.carer.id === 'A'), b = rep.rows.find(r => r.carer.id === 'B');
+  assert.deepStrictEqual([a.days, a.overtime, a.short, a.weekendsWorked, a.longestWeekendRun, a.sickDays], [5, 1, 2, 2, 2, 2]);
+  assert.deepStrictEqual([b.days, b.short, b.weekendsWorked], [4, 0, 0]);
+});
+
 function placementsOf(s, weeks) {
   const worked = {}, runs = {}; // worked[id] = flat day list; runs[id][weekIndex] = {runId: days}
   for (const c of s.carers) { worked[c.id] = []; runs[c.id] = []; }

@@ -19,10 +19,10 @@
   main { padding: 16px; }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 16px; }
   .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
-  button.btn { padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); cursor: pointer; font-size: 13px; }
-  button.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
-  button.btn.danger { color: var(--err); }
-  button.btn:hover { filter: brightness(0.96); }
+  .btn { display: inline-block; padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); cursor: pointer; font-size: 13px; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  .btn.danger { color: var(--err); }
+  .btn:hover { filter: brightness(0.96); }
   input, select { font: inherit; padding: 4px 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); color: var(--text); }
   table { border-collapse: collapse; width: 100%; }
   th, td { border: 1px solid var(--line); padding: 6px; vertical-align: top; text-align: left; }
@@ -50,6 +50,30 @@
   .tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 10px; background: #eef1f6; margin-right: 3px; }
   .tag.M { background: #dbeafe; } .tag.F { background: #fce7f3; }
   .tag.flag { background: #fef3c7; }
+  .tag.trainee { background: #e0f2fe; }
+  .viewonly { margin-bottom: 12px; padding: 10px 12px; border-radius: 8px; background: #eef2ff; border: 1px solid #a5b4fc; }
+  table.leavecal { font-size: 11px; }
+  table.leavecal th, table.leavecal td { padding: 2px 3px; text-align: center; min-width: 20px; }
+  table.leavecal tbody th { text-align: left; white-space: nowrap; }
+  table.leavecal .we { background: #f3f4f6; }
+  table.leavecal th.short { background: var(--err-bg); color: var(--err); }
+  .lv.al, .lvkey.al { background: #dbeafe; } .lv.sk, .lvkey.sk { background: #fde2e2; } .lv.na, .lvkey.na { background: #eee; color: var(--muted); }
+  .lvkey { display: inline-block; min-width: 22px; text-align: center; border-radius: 3px; margin: 0 2px 0 8px; }
+  .lvkey.short { background: var(--err-bg); }
+  table.leavecheck tr.err td { background: var(--err-bg); }
+  .btn.final { border-color: #16a34a; color: #15803d; }
+  .multi { display: inline-flex; }
+  .multi .btn { border-radius: 6px 0 0 6px; }
+  .multi select { border-radius: 0 6px 6px 0; border-left: none; }
+  .finalbar { margin-top: 8px; padding: 8px 10px; border-radius: 6px; background: var(--ok-bg); border: 1px solid #86efac; font-size: 13px; }
+  .btn:disabled, select:disabled { opacity: .55; cursor: not-allowed; }
+  .panel.sick { border-color: #f5c26b; }
+  .panel.cover { border-color: var(--accent); }
+  .coveritem { border-top: 1px solid var(--line); padding: 8px 0; }
+  .picks { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+  .btn.pick { text-align: left; font-size: 12px; }
+  .why { margin: 4px 0; padding-left: 18px; font-size: 12px; }
+  .linkbtn.cover { display: block; margin-bottom: 2px; color: var(--err); }
   .tag.agency { background: #ede9fe; }
   .tag.drv { background: #dcfce7; } .tag.nodrv { background: #f3f4f6; color: var(--muted); }
   .muted { color: var(--muted); }
@@ -64,6 +88,9 @@
     header, main > *:not(#print-area) { display: none !important; }
     #print-area { display: block; }
     #print-area table { font-size: 11px; }
+    #print-area .sheet { page-break-after: always; break-after: page; }
+    #print-area .sheet table { font-size: 14px; }
+    #print-area .sheet td, #print-area .sheet th { padding: 8px; }
     body { background: #fff; }
   }
 </style>
@@ -75,8 +102,12 @@
     <button data-tab="schedule">Schedule</button>
     <button data-tab="carers">Carers</button>
     <button data-tab="runs">Runs</button>
+    <button data-tab="leave">Leave</button>
+    <button data-tab="reports">Reports</button>
     <button data-tab="settings">Settings &amp; Data</button>
   </nav>
+  <span style="flex:1"></span>
+  <button class="btn" id="undoBtn" title="Undo the last change (Ctrl+Z / ⌘Z)" disabled>↶ Undo</button>
 </header>
 <main id="app"></main>
 
@@ -345,12 +376,18 @@ function clearUnlocked(state, weekStart) {
   const week = getWeek(state, weekStart);
   for (const run of state.runs) {
     for (let d = 0; d < 7; d++) {
-      for (const s of getCell(week, run, d).slots) {
+      const cell = getCell(week, run, d);
+      for (const s of cell.slots) {
         if (!s.locked) { s.c = null; s.override = false; }
       }
+      if (cell.shadow.auto) cell.shadow = { c: null, override: false }; // trainee shadows placed by auto-fill
     }
   }
 }
+
+// A trainee (carer.traineeUntil = 'YYYY-MM-DD') only shadows, up to and including that date.
+function inTraining(carer, date) { return !!carer.traineeUntil && date <= carer.traineeUntil; }
+const ukDate = iso => iso.split('-').reverse().join('/');
 
 /*
  * Auto-fill the week, one day at a time – Saturday and Sunday first, then Monday to Friday.
@@ -364,6 +401,9 @@ function clearUnlocked(state, weekStart) {
  * Locked (manually chosen) slots are never changed.
  */
 function autoFill(state, weekStart, opts) {
+  if (getWeek(state, weekStart).final) {
+    return { log: ['This week is finalised – reopen it to change it.'], issues: validate(state, weekStart), finalised: true };
+  }
   opts = Object.assign({}, state.settings, opts || {});
   const week = getWeek(state, weekStart);
   clearUnlocked(state, weekStart);
@@ -442,8 +482,9 @@ function autoFill(state, weekStart, opts) {
   const secondWeekend = new Set(carers.filter(c => streak[c.id] === 1 && (booked[5].has(c.id) || booked[6].has(c.id))).map(c => c.id));
   const overQuota = (c, d) => d >= 5 && opts.weekendRule !== false && streak[c.id] === 1 &&
     !secondWeekend.has(c.id) && secondWeekend.size >= secondWeekendQuota;
+  const training = (c, d) => inTraining(c, addDays(weekStart, d));
   const allowedHere = (c, run, d, rule, passNo, cell) =>
-    !clashes(c, cell) && !overQuota(c, d) && genderOk(run, c) && runTypeOk(run, c) && preferredOk(run, c) && allowedOk(run, c) && ok(c, d) && !booked[d].has(c.id) &&
+    !training(c, d) && !clashes(c, cell) && !overQuota(c, d) && genderOk(run, c) && runTypeOk(run, c) && preferredOk(run, c) && allowedOk(run, c) && ok(c, d) && !booked[d].has(c.id) &&
     !weekendBlocked(c, d) &&
     !(reserved.has(c.id) && !isSpecific(run) && (passNo === 1 || d >= 5)) &&
     (!rule.needDriver || c.driver) &&
@@ -607,6 +648,31 @@ function autoFill(state, weekStart, opts) {
     return swapped;
   }
 
+  // Trainees shadow an experienced carer on their training days (in the shadow place, never a normal slot).
+  function shadowPass() {
+    let placed = 0;
+    const cap = c => capacity(c, false);
+    for (const c of shuffle(carers.filter(c => DAYS.some((_, d) => training(c, d))), rng)) {
+      for (let d = 0; d < 7; d++) {
+        if (!training(c, d) || worked[c.id].size >= cap(c) || !ok(c, d) || booked[d].has(c.id) ||
+          weekendBlocked(c, d) || tooManyInARow(c, d) || breaksRest(c, d)) continue;
+        const options = state.runs.filter(r => r.days[d] && genderOk(r, c)).map(r => ({ r, cell: getCell(week, r, d) }))
+          .filter(x => !x.cell.shadow.c && !clashes(c, x.cell) &&
+            x.cell.slots.some(sl => sl.c && carerById[sl.c] && !training(carerById[sl.c], d) && !carerById[sl.c].agency));
+        if (!options.length) continue;
+        const pref = x => (runOn(c, d - 1) === x.r.id || runOn(c, d + 1) === x.r.id ? 2 : 0) + (prefersRun(c, x.r) ? 1 : 0) + rng();
+        const best = options.map(x => ({ x, v: pref(x) })).sort((a, b) => b.v - a.v)[0].x;
+        best.cell.shadow = { c: c.id, override: false, auto: true };
+        booked[d].add(c.id);
+        worked[c.id].add(d);
+        runCount[c.id][best.r.id] = (runCount[c.id][best.r.id] || 0) + 1;
+        dayRun[c.id][d] = best.r.id;
+        placed++;
+      }
+    }
+    return placed;
+  }
+
   // Last resort: agency staff fill any slots still empty (their days per week is the most they can do).
   function agencyPass() {
     const cap = c => capacity(c, false);
@@ -698,6 +764,8 @@ function autoFill(state, weekStart, opts) {
   if (f4) log.push(`Moved ${f4} overtime shift(s) to carers who were short of their days.`);
   const f5 = preferenceSwaps();
   if (f5) log.push(`Swapped ${f5} shift(s) on the same day to put carers on their preferred runs.`);
+  const f7 = shadowPass();
+  if (f7) log.push(`Put trainees on ${f7} shadow shift(s) with experienced carers.`);
   const f6 = opts.useAgency !== false && agency.length ? agencyPass() : 0;
   if (f6) log.push(`Agency staff filled ${f6} shift(s) that no regular carer could cover.`);
   const shiftCount = state.runs.reduce((n, r) => n + r.days.filter(Boolean).length * slotCount(r), 0);
@@ -709,6 +777,285 @@ function autoFill(state, weekStart, opts) {
       : ' The weekend-off, days-in-a-row and other rules stopped those shifts being given out.'));
   }
   return { log, issues: validate(state, weekStart) };
+}
+
+// Fill only the empty slots of the week: everyone already placed stays exactly where they are.
+// Works by treating every filled slot as locked for the duration of a normal auto-fill.
+function fillGaps(state, weekStart, opts) {
+  const week = getWeek(state, weekStart);
+  if (week.final) return Object.assign(autoFill(state, weekStart, opts), { filled: 0 });
+  const unlockedFilled = [];
+  for (const run of state.runs) {
+    for (let d = 0; d < 7; d++) {
+      for (const sl of getCell(week, run, d).slots) if (sl.c && !sl.locked) { sl.locked = true; unlockedFilled.push(sl); }
+    }
+  }
+  const empty = () => state.runs.reduce((n, r) => n + r.days.reduce((m, on, d) => m + (on ? getCell(week, r, d).slots.filter(sl => !sl.c).length : 0), 0), 0);
+  const before = empty();
+  let result;
+  try { result = autoFill(state, weekStart, opts); } finally { for (const sl of unlockedFilled) sl.locked = false; }
+  const filled = before - empty();
+  result.log = [`Filled ${filled} of ${before} empty slot(s). Everyone already on the schedule was left where they were.`]
+    .concat(result.log.filter(l => /Agency staff|short of carers/.test(l)));
+  result.filled = filled;
+  return result;
+}
+
+// Auto-fill `count` weeks starting at weekStart, in date order (each week's plan uses the ones before it).
+// Finalised weeks are skipped. Returns [{ week, finalised, log, problems }].
+function autoFillWeeks(state, weekStart, count, opts) {
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    const ws = addDays(weekStart, 7 * i);
+    if (getWeek(state, ws).final) { out.push({ week: ws, finalised: true, log: [], problems: 0 }); continue; }
+    const r = autoFill(state, ws, opts);
+    out.push({ week: ws, finalised: false, log: r.log, problems: r.issues.list.filter(x => x.level === 'error').length });
+  }
+  return out;
+}
+
+// What a period of leave would do to cover, day by day. For each day it compares the shifts to fill with the
+// carers likely to be around (each available regular carer counts as days-per-week ÷ days-available-that-week,
+// i.e. their share of that day), in total, drivers, and for male-only / female-only runs. Agency staff aren't counted.
+// Returns { days: [{ date, shifts, expected, short: [messages], off: [names] }], problemDays }.
+function leaveImpact(state, carerId, from, to, type) {
+  const days = [];
+  if (!from) return { days, problemDays: 0 };
+  if (!to || to < from) to = from;
+  const trial = JSON.parse(JSON.stringify(state));
+  const who = trial.carers.find(c => c.id === carerId);
+  if (who) who.leave = (who.leave || []).concat([{ type: type || 'AL', from, to }]);
+  const regulars = trial.carers.filter(c => c.active !== false && !c.agency);
+  for (let date = from, n = 0; date <= to && n < 120; date = addDays(date, 1), n++) {
+    const ws = mondayOf(date), d = DAYS.findIndex((_, i) => addDays(ws, i) === date);
+    const runs = trial.runs.filter(r => r.days[d]);
+    const need = {
+      all: runs.reduce((t, r) => t + slotCount(r), 0),
+      drivers: runs.filter(needsDriver).length,
+      F: runs.filter(r => r.gender === 'F').reduce((t, r) => t + slotCount(r), 0),
+      M: runs.filter(r => r.gender === 'M').reduce((t, r) => t + slotCount(r), 0),
+    };
+    const have = { all: 0, drivers: 0, F: 0, M: 0 }, off = [];
+    for (const c of regulars) {
+      const st = carerStatus(c, ws, d);
+      if (!st.ok) { if (st.code === 'AL' || st.code === 'SICK') off.push(c.name); continue; }
+      if (inTraining(c, date)) continue;
+      const availDays = DAYS.filter((_, i) => carerStatus(c, ws, i).ok).length;
+      const share = Math.min(Number(c.daysPerWeek || 0), availDays) / Math.max(1, availDays);
+      have.all += share; have[c.gender] += share;
+      if (c.driver) have.drivers += share;
+    }
+    const short = [];
+    const fmt = x => (Math.round(x * 10) / 10).toString();
+    if (have.all < need.all) short.push(`about ${fmt(have.all)} carers for ${need.all} shifts`);
+    if (have.drivers < need.drivers) short.push(`about ${fmt(have.drivers)} drivers for ${need.drivers} runs needing one`);
+    if (have.F < need.F) short.push(`about ${fmt(have.F)} female carers for ${need.F} female-only places`);
+    if (have.M < need.M) short.push(`about ${fmt(have.M)} male carers for ${need.M} male-only places`);
+    days.push({ date, shifts: need.all, expected: have.all, short, off });
+  }
+  return { days, problemDays: days.filter(x => x.short.length).length };
+}
+
+// Fairness over the `weeks` weeks ending with endWeek (only weeks that have a schedule count).
+// One row per regular carer: { carer, weeks, days, due, short, overtime, weekendsWorked, weekendsTotal,
+// longestWeekendRun, sickDays, leaveDays, shadowDays }.
+function fairnessReport(state, endWeek, weeks) {
+  const list = [];
+  for (let i = weeks - 1; i >= 0; i--) { const ws = addDays(endWeek, -7 * i); if (state.weeks[ws]) list.push(ws); }
+  const rows = state.carers.filter(c => !c.agency).map(c => ({ carer: c, weeks: list.length, days: 0, due: 0, short: 0, overtime: 0,
+    weekendsWorked: 0, weekendsTotal: 0, longestWeekendRun: 0, run: 0, sickDays: 0, leaveDays: 0, shadowDays: 0 }));
+  for (const ws of list) {
+    const v = validate(state, ws), week = state.weeks[ws];
+    for (const row of rows) {
+      const c = row.carer, info = v.carers[c.id];
+      row.days += info.count;
+      row.due += info.want || 0;
+      row.short += Math.max(0, (info.want || 0) - info.count);
+      row.overtime += Math.max(0, info.count - Number(c.daysPerWeek || 0));
+      const weekend = info.days[5] || info.days[6];
+      row.weekendsTotal++;
+      if (weekend) { row.weekendsWorked++; row.run++; row.longestWeekendRun = Math.max(row.longestWeekendRun, row.run); } else row.run = 0;
+      for (let d = 0; d < 7; d++) {
+        const date = addDays(ws, d), l = leaveOn(c, date);
+        if (l && l.type === 'SICK') row.sickDays++;
+        if (l && l.type === 'AL') row.leaveDays++;
+        if (state.runs.some(r => r.days[d] && week.cells[r.id] && week.cells[r.id][d] && week.cells[r.id][d].shadow && week.cells[r.id][d].shadow.c === c.id)) row.shadowDays++;
+      }
+    }
+  }
+  rows.forEach(r => delete r.run);
+  return { weeks: list, rows };
+}
+
+// ---- Carer spreadsheet import / export ----
+// One row per carer. Blank cells keep the carer's current value (or the default for a new carer).
+const CARER_COLUMNS = [
+  { key: 'name', head: 'Name', match: /^name/, help: 'Full name. Rows are matched to existing carers by name, so this updates them.' },
+  { key: 'gender', head: 'Gender (M/F)', match: /^gender|^sex/, help: 'M or F.' },
+  { key: 'driver', head: 'Driver (Yes/No)', match: /^driver|^drive/, help: 'Yes if they drive.' },
+  { key: 'daysPerWeek', head: 'Days per week', match: /^days per week|^days\/week|^contract/, help: 'Contracted days, 0–7 (for agency staff: the most days they can do).' },
+  { key: 'overtime', head: 'Agreed +1 overtime day (Yes/No)', match: /overtime/, help: 'Yes if they have agreed to one extra day when needed.' },
+  { key: 'runTypes', head: 'Can go on (Both/Doubles/Singles)', match: /^can go on|^run type/, help: 'Both, Doubles (double-ups only) or Singles.' },
+  { key: 'available', head: 'Days they can work', match: /^days they can work|^available|^availability/, help: 'All, or days such as "Mon Tue Wed" or "Mon-Fri". Blank = all days.' },
+  { key: 'agency', head: 'Agency (Yes/No)', match: /^agency/, help: 'Yes for agency staff (only used to fill gaps).' },
+  { key: 'preferredRuns', head: 'Preferred runs', match: /^preferred/, help: 'Run names separated by ; e.g. "Run 2; Run 4". Must match the names on the Runs page.' },
+  { key: 'onlyPreferred', head: 'Only preferred runs (Yes/No)', match: /^only/, help: 'Yes if they must only ever work their preferred runs.' },
+  { key: 'notWith', head: "Can't work with", match: /^can.?t work with|^not with/, help: 'Names separated by ; – applies both ways.' },
+  { key: 'notes', head: 'Notes', match: /^notes?/, help: 'Anything else.' },
+  { key: 'traineeUntil', head: 'Trainee until (date)', match: /^trainee/, help: 'For new starters: they only shadow experienced carers up to this date (e.g. 30/11/2026). Blank = not a trainee.' },
+];
+const EXAMPLE_PREFIX = /^example\s*:/i;
+
+function parseYesNo(v) {
+  const t = String(v).trim().toLowerCase();
+  if (/^(yes|y|true|1|x|✓|✔)$/.test(t)) return true;
+  if (/^(no|n|false|0)$/.test(t)) return false;
+  return null;
+}
+
+function parseDays(v) {
+  const t = String(v).trim().toLowerCase();
+  if (!t || t === 'all' || t === 'every day') return DAYS.map(() => true);
+  const out = DAYS.map(() => false);
+  const idx = w => DAYS.findIndex(d => w.startsWith(d.toLowerCase()));
+  for (const part of t.split(/[,;\/\s]+/).filter(Boolean)) {
+    const range = part.split(/[-–]/);
+    if (range.length === 2) {
+      const a = idx(range[0]), b = idx(range[1]);
+      if (a < 0 || b < 0) return null;
+      for (let i = a; ; i = (i + 1) % 7) { out[i] = true; if (i === b) break; }
+    } else {
+      const i = idx(part);
+      if (i < 0) return null;
+      out[i] = true;
+    }
+  }
+  return out;
+}
+
+// 'DD/MM/YYYY', 'YYYY-MM-DD' or an Excel date number -> 'YYYY-MM-DD' (or null)
+function parseDate(v) {
+  const t = String(v).trim();
+  let m;
+  if ((m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  if ((m = t.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/))) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+  if (/^\d{5}(\.\d+)?$/.test(t)) return addDays('1899-12-30', Math.floor(Number(t)));
+  return null;
+}
+
+function daysText(available) {
+  if (available.every(Boolean)) return 'All';
+  return DAYS.filter((_, i) => available[i]).join(' ');
+}
+
+// Rows (first row = headings) for every carer, in the same layout as the template.
+function carersToRows(state) {
+  const runName = id => (state.runs.find(r => r.id === id) || {}).name;
+  const nameOf = id => (state.carers.find(c => c.id === id) || {}).name;
+  const list = state.carers.slice().sort((a, b) => (a.agency ? 1 : 0) - (b.agency ? 1 : 0) || a.name.localeCompare(b.name));
+  return [CARER_COLUMNS.map(c => c.head)].concat(list.map(c => [
+    c.name, c.gender, c.driver ? 'Yes' : 'No', Number(c.daysPerWeek || 0), c.overtime ? 'Yes' : 'No',
+    { double: 'Doubles', single: 'Singles' }[c.runTypes] || 'Both', daysText(c.available), c.agency ? 'Yes' : 'No',
+    (c.preferredRuns || []).map(runName).filter(Boolean).join('; '), c.onlyPreferred ? 'Yes' : 'No',
+    state.carers.filter(o => cantPair(c, o)).map(o => o.name).join('; '), c.notes || '', c.traineeUntil ? ukDate(c.traineeUntil) : '',
+  ]));
+}
+
+// Work out what importing these rows would do, without changing anything.
+// Returns { add: [carer], update: [{ id, name, fields }], links: [[nameA, nameB]], errors: [], warnings: [], skipped }.
+function planCarerImport(state, rows) {
+  const plan = { add: [], update: [], links: [], errors: [], warnings: [], skipped: 0, unchanged: 0 };
+  const header = (rows[0] || []).map(h => String(h || '').trim().toLowerCase());
+  const col = {};
+  CARER_COLUMNS.forEach(c => { const i = header.findIndex(h => c.match.test(h)); if (i >= 0) col[c.key] = i; });
+  if (col.name === undefined) { plan.errors.push('No "Name" column found – the first row must be the column headings from the template.'); return plan; }
+  const byName = new Map(state.carers.map(c => [c.name.trim().toLowerCase(), c]));
+  const seen = new Set();
+  const preferredLists = [];
+  rows.slice(1).forEach((row, i) => {
+    const rowNo = i + 2;
+    const cell = key => col[key] === undefined ? '' : String(row[col[key]] == null ? '' : row[col[key]]).trim();
+    const name = cell('name');
+    if (!name) { if (row.some(v => String(v == null ? '' : v).trim())) plan.errors.push(`Row ${rowNo}: no name`); return; }
+    if (EXAMPLE_PREFIX.test(name)) { plan.skipped++; return; }
+    const key = name.toLowerCase();
+    if (seen.has(key)) { plan.errors.push(`Row ${rowNo}: ${name} appears more than once`); return; }
+    seen.add(key);
+    const f = {}, bad = [];
+    const g = cell('gender').toUpperCase();
+    if (g) { if (/^(M|MALE)$/.test(g)) f.gender = 'M'; else if (/^(F|FEMALE)$/.test(g)) f.gender = 'F'; else bad.push(`Gender must be M or F (got "${cell('gender')}")`); }
+    for (const k of ['driver', 'overtime', 'agency', 'onlyPreferred']) {
+      const v = cell(k);
+      if (!v) continue;
+      const b = parseYesNo(v);
+      if (b === null) bad.push(`${CARER_COLUMNS.find(c => c.key === k).head.replace(/ \(.*/, '')} must be Yes or No (got "${v}")`); else f[k] = b;
+    }
+    const dpw = cell('daysPerWeek');
+    if (dpw) { const n = Number(dpw); if (Number.isInteger(n) && n >= 0 && n <= 7) f.daysPerWeek = n; else bad.push(`Days per week must be a whole number 0–7 (got "${dpw}")`); }
+    const rt = cell('runTypes').toLowerCase();
+    if (rt) { const m = { both: 'both', doubles: 'double', double: 'double', 'double-ups': 'double', singles: 'single', single: 'single' }[rt]; if (m) f.runTypes = m; else bad.push(`Can go on must be Both, Doubles or Singles (got "${cell('runTypes')}")`); }
+    if (col.available !== undefined) { const a = parseDays(cell('available')); if (a) f.available = a; else bad.push(`Days they can work not understood ("${cell('available')}") – use e.g. "Mon Tue Wed" or "Mon-Fri"`); }
+    const pr = cell('preferredRuns');
+    if (pr) {
+      const ids = [];
+      for (const n of pr.split(/[;,]/).map(x => x.trim()).filter(Boolean)) {
+        const run = state.runs.find(r => r.name.trim().toLowerCase() === n.toLowerCase());
+        if (run) ids.push(run.id); else plan.warnings.push(`Row ${rowNo}: no run called "${n}" – preferred run ignored`);
+      }
+      f.preferredRuns = ids;
+    }
+    if (cell('notes')) f.notes = cell('notes');
+    const tu = cell('traineeUntil');
+    if (tu) { const iso = parseDate(tu); if (iso) f.traineeUntil = iso; else bad.push(`Trainee until must be a date like 30/11/2026 (got "${tu}")`); }
+    if (bad.length) { plan.errors.push(`Row ${rowNo} (${name}): ${bad.join('; ')} – row not imported`); return; }
+    for (const other of cell('notWith').split(/[;,]/).map(x => x.trim()).filter(Boolean)) plan.links.push([name, other, rowNo]);
+    const existing = byName.get(key);
+    if (existing) {
+      // only what actually differs from what is already set
+      const was = k => existing[k] === undefined ? { driver: false, overtime: false, agency: false, onlyPreferred: false, runTypes: 'both', preferredRuns: [], notes: '' }[k] : existing[k];
+      const changed = Object.keys(f).filter(k => JSON.stringify(f[k]) !== JSON.stringify(was(k)));
+      const fields = Object.fromEntries(changed.map(k => [k, f[k]]));
+      const labels = changed.map(k => CARER_COLUMNS.find(c => c.key === k).head.replace(/ \(.*/, '').toLowerCase());
+      if (changed.length) plan.update.push({ id: existing.id, name: existing.name, fields, labels });
+      else plan.unchanged++;
+    }
+    else {
+      if (!f.gender) { plan.errors.push(`Row ${rowNo} (${name}): Gender is needed for a new carer – row not imported`); return; }
+      plan.add.push(Object.assign({ id: uid(), name, gender: 'F', driver: false, daysPerWeek: 5, overtime: false, runTypes: 'both',
+        available: DAYS.map(() => true), leave: [], notes: '', active: true, agency: false }, f));
+    }
+  });
+  const known = new Set(state.carers.map(c => c.name.trim().toLowerCase()).concat(plan.add.map(c => c.name.toLowerCase())));
+  const findExisting = n => state.carers.find(c => c.name.trim().toLowerCase() === n.toLowerCase());
+  plan.links = plan.links.filter(([a, b, rowNo]) => {
+    if (!known.has(b.toLowerCase())) {
+      plan.warnings.push(`Row ${rowNo}: no carer called "${b}" – "can't work with" ignored`);
+      return false;
+    }
+    const ca = findExisting(a), cb = findExisting(b);
+    return !(ca && cb && cantPair(ca, cb)); // already set
+  });
+  for (const [a, b] of plan.links) {
+    for (const n of [a, b]) {
+      const u = plan.update.find(x => x.name.toLowerCase() === n.toLowerCase());
+      const ex = findExisting(n);
+      if (u && !u.labels.includes("can't work with")) u.labels.push("can't work with");
+      else if (!u && ex) { plan.update.push({ id: ex.id, name: ex.name, fields: {}, labels: ["can't work with"] }); plan.unchanged = Math.max(0, plan.unchanged - 1); }
+    }
+  }
+  return plan;
+}
+
+function applyCarerImport(state, plan) {
+  state.carers.push(...plan.add);
+  for (const u of plan.update) Object.assign(state.carers.find(c => c.id === u.id), u.fields);
+  const find = n => state.carers.find(c => c.name.trim().toLowerCase() === n.toLowerCase());
+  for (const [a, b] of plan.links) {
+    const ca = find(a), cb = find(b);
+    if (!ca || !cb || ca === cb) continue;
+    ca.notWith = [...new Set((ca.notWith || []).concat(cb.id))];
+    cb.notWith = [...new Set((cb.notWith || []).concat(ca.id))];
+  }
 }
 
 // Checks every cell of the week against the rules. Returns { cells: {key: [issue]}, list: [issue], carers: {...} }.
@@ -756,6 +1103,7 @@ function validate(state, weekStart) {
         const c = byId[s.c];
         if (!c) { add(run.id, d, 'error', 'Unknown carer'); continue; }
         if (!genderOk(run, c)) add(run.id, d, 'error', `${c.name}${role}: run is ${run.gender === 'M' ? 'male' : 'female'} only`);
+        if (!role && inTraining(c, addDays(weekStart, d))) add(run.id, d, 'warn', `${c.name}: trainee until ${ukDate(c.traineeUntil)} – should be shadowing`);
         if (!role && !preferredOk(run, c)) add(run.id, d, s.override ? 'warn' : 'error', `${c.name}: only works ${preferredNames(c, state.runs)}${s.override ? ' (overridden)' : ''}`);
         if (!role && !runTypeOk(run, c)) add(run.id, d, s.override ? 'warn' : 'error', `${c.name}: ${runTypesLabel(c).toLowerCase()}${s.override ? ' (overridden)' : ''}`);
         if (!role && !allowedOk(run, c)) add(run.id, d, s.override ? 'warn' : 'error', `${c.name}: not on this run's carer list${s.override ? ' (overridden)' : ''}`);
@@ -806,8 +1154,84 @@ function validate(state, weekStart) {
   return { cells, list, carers };
 }
 
+// Mark a carer off sick from `from` to `to` (YYYY-MM-DD) and take them off every shift in that period.
+// Returns the slots that were emptied: [{ week, runId, d, idx }].
+function reportSickness(state, carerId, from, to) {
+  const carer = state.carers.find(c => c.id === carerId);
+  if (!carer || !from) return [];
+  if (!to || to < from) to = from;
+  carer.leave = (carer.leave || []).concat([{ type: 'SICK', from, to }]);
+  const emptied = [];
+  for (const ws of Object.keys(state.weeks).sort()) {
+    for (let d = 0; d < 7; d++) {
+      const date = addDays(ws, d);
+      if (date < from || date > to) continue;
+      for (const run of state.runs) {
+        if (!run.days[d]) continue;
+        const cell = getCell(state.weeks[ws], run, d);
+        cell.slots.forEach((sl, idx) => {
+          if (sl.c !== carerId) return;
+          Object.assign(sl, { c: null, locked: false, override: false });
+          emptied.push({ week: ws, runId: run.id, d, idx });
+        });
+        if (cell.shadow && cell.shadow.c === carerId) cell.shadow = { c: null, override: false };
+      }
+    }
+  }
+  return emptied;
+}
+
+// Who could cover an empty slot. Each carer is tried in the slot and the week re-checked: anyone who would
+// create a new rule problem is ruled out (with that problem as the reason). The rest are ranked: regular staff
+// before agency, no overtime before overtime, most days short of their profile first, then working the
+// day before/after, then preferred run. Returns { ok: [{ carer, notes }], no: [{ carer, reason }] }.
+function suggestCover(state, weekStart, runId, d, idx) {
+  const run = state.runs.find(r => r.id === runId);
+  const week = getWeek(state, weekStart);
+  const cell = run && run.days[d] && getCell(week, run, d);
+  const slot = cell && cell.slots[idx];
+  if (!slot || slot.c) return { ok: [], no: [] };
+  const otherEmpty = cell.slots.some((sl, i) => i !== idx && !sl.c);
+  const problems = v => new Set(v.list.filter(i => i.level === 'error' && !/carer\(s\) needed/.test(i.msg) &&
+    !(otherEmpty && /No driver/.test(i.msg))).map(i => i.msg));
+  const before = validate(state, weekStart);
+  const base = problems(before);
+  const ok = [], no = [];
+  for (const c of state.carers.filter(c => c.active !== false)) {
+    slot.c = c.id;
+    let fresh;
+    try { fresh = [...problems(validate(state, weekStart))].filter(m => !base.has(m)); } finally { slot.c = null; }
+    if (fresh.length) {
+      const reason = fresh[0].replace(new RegExp(`^.* (${DAYS.join('|')}): `), '').replace(`${c.name}: `, '')
+        .replace(/^double booked on (\w+)$/, 'already working $1')
+        .replace(/^(\d+) days booked, maximum is (\d+)$/, 'would be $1 days this week (maximum $2)');
+      no.push({ carer: c, reason });
+      continue;
+    }
+    const b = before.carers[c.id];
+    const short = c.agency ? 0 : Math.max(0, (b.want || 0) - b.count);
+    const overtime = !c.agency && b.count + 1 > Number(c.daysPerWeek || 0);
+    const near = [d - 1, d + 1].filter(e => e >= 0 && e <= 6 && b.days[e]);
+    const sameRun = near.some(e => run.days[e] && getCell(week, run, e).slots.some(sl => sl.c === c.id));
+    const preferred = (c.preferredRuns || []).includes(run.id);
+    const notes = [];
+    if (c.agency) notes.push('agency');
+    if (short) notes.push(`${short} day(s) short`);
+    if (overtime) notes.push('overtime day');
+    if (sameRun) notes.push('on this run the day before/after');
+    else if (near.length) notes.push('working the day before/after');
+    if (preferred) notes.push('preferred run');
+    ok.push({ carer: c, notes, rank: [c.agency ? 1 : 0, overtime ? 1 : 0, -short, sameRun ? 0 : near.length ? 1 : 2, preferred ? 0 : 1] });
+  }
+  ok.sort((a, b) => {
+    for (let i = 0; i < a.rank.length; i++) if (a.rank[i] !== b.rank[i]) return a.rank[i] - b.rank[i];
+    return a.carer.name.localeCompare(b.carer.name);
+  });
+  return { ok: ok.map(({ carer, notes }) => ({ carer, notes })), no };
+}
+
 if (typeof module !== 'undefined') {
-  module.exports = { prefersRun, cantPair, DAYS, HISTORY_WEEKS, weekDays, longestStretch, restBreaches, ROTATION_WEEKS, history, weekendStreak, rotation, uid, addDays, mondayOf, newState, getWeek, getCell, carerStatus, capacity, autoFill, validate, clearUnlocked };
+  module.exports = { inTraining, autoFillWeeks, leaveImpact, fairnessReport, CARER_COLUMNS, carersToRows, planCarerImport, applyCarerImport, parseDays, fillGaps, reportSickness, suggestCover, prefersRun, cantPair, DAYS, HISTORY_WEEKS, weekDays, longestStretch, restBreaches, ROTATION_WEEKS, history, weekendStreak, rotation, uid, addDays, mondayOf, newState, getWeek, getCell, carerStatus, capacity, autoFill, validate, clearUnlocked };
 }
 // ===== ENGINE END =====
 </script>
@@ -815,14 +1239,24 @@ if (typeof module !== 'undefined') {
 <script>
 // ===== UI =====
 const STORE_KEY = 'careschedule.v1';
+// In the desktop app (desktop/ folder) data is kept in a file via window.careDesktop; opened as a plain
+// web page it is kept in the browser's storage.
+const desktop = window.careDesktop || null;
+let dataProblem = null; // set when saved data couldn't be read, so we don't overwrite it
+
+let deskInfo = desktop ? desktop.info() : null; // data folder, and whether this computer can edit
+const holderText = () => deskInfo && deskInfo.holder ? `${deskInfo.holder.user} on ${deskInfo.holder.computer}` : 'another computer';
 let state = load();
-let ui = { tab: 'schedule', week: mondayOf(todayIso()), editCarer: null, editRun: null, report: null };
+let ui = { planCount: 4, leaveForm: null, leaveWeeks: 8, reportWeeks: 13, printWhat: 'runs', importPlan: null, tab: 'schedule', week: mondayOf(todayIso()), editCarer: null, editRun: null, report: null, sickForm: null, cover: [] };
 
 function load() {
   try {
-    const raw = localStorage.getItem(STORE_KEY);
+    const raw = desktop ? desktop.load() : localStorage.getItem(STORE_KEY);
     if (raw) return withDefaults(JSON.parse(raw));
-  } catch (e) { console.warn('Could not load saved data', e); }
+  } catch (e) {
+    console.warn('Could not load saved data', e);
+    dataProblem = e.message || String(e);
+  }
   return newState();
 }
 function withDefaults(data) {
@@ -830,9 +1264,56 @@ function withDefaults(data) {
   for (const c of data.carers || []) delete c.weekendPriority; // replaced by the automatic weekend-off flag
   return Object.assign(s, data, { settings: Object.assign(s.settings, data.settings) });
 }
-function save() {
-  try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
-  catch (e) { alert('Could not save to browser storage. Please use "Export backup" to keep your data.'); }
+// The data as saved: weeks and shifts with nobody on them are left out (just looking at a week creates them),
+// so browsing never counts as a change.
+function stateJson(st) {
+  return JSON.stringify(st, (k, v) => {
+    if (k === 'shadowOpen') return undefined;
+    if (k !== 'weeks' || !v) return v;
+    const weeks = {};
+    for (const [ws, w] of Object.entries(v)) {
+      const cells = {};
+      for (const [runId, byDay] of Object.entries(w.cells || {})) {
+        const days = {};
+        for (const [d, cell] of Object.entries(byDay)) if (cell.slots.some(sl => sl.c) || (cell.shadow && cell.shadow.c)) days[d] = cell;
+        if (Object.keys(days).length) cells[runId] = days;
+      }
+      if (Object.keys(cells).length || w.final) weeks[ws] = Object.assign({}, w, { cells });
+    }
+    return weeks;
+  });
+}
+
+// Undo: every saved change keeps the version before it (up to UNDO_LIMIT).
+const UNDO_LIMIT = 30;
+const undoStack = [];
+let lastSaved = stateJson(state);
+
+let saveFailed = false;
+function save(fromUndo) {
+  if (dataProblem) return; // never overwrite data we couldn't read
+  const json = stateJson(state);
+  if (json === lastSaved) return;
+  if (deskInfo && deskInfo.mode === 'view') {
+    // someone else is editing: put things back and say why
+    state = withDefaults(JSON.parse(lastSaved));
+    alert(`View only – ${holderText()} has CareSchedule open, so changes here can't be saved.\n\nThis screen updates when they save. Once they close CareSchedule you can edit (or press "Try again").`);
+    return;
+  }
+  if (!fromUndo) { undoStack.push(lastSaved); if (undoStack.length > UNDO_LIMIT) undoStack.shift(); }
+  lastSaved = json;
+  try {
+    if (desktop) {
+      const result = desktop.save(json);
+      if (result !== true) throw new Error(result);
+    } else {
+      localStorage.setItem(STORE_KEY, json);
+    }
+    saveFailed = false;
+  } catch (e) {
+    if (!saveFailed) alert(desktop ? `Could not save your data file: ${e.message}` : 'Could not save to browser storage. Please use "Export backup" to keep your data.');
+    saveFailed = true;
+  }
 }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])); }
 const byId = id => state.carers.find(c => c.id === id);
@@ -841,10 +1322,51 @@ const sortedCarers = () => state.carers.slice().sort((a, b) => a.name.localeComp
 function fmtDate(iso) { const [y, m, d] = iso.split('-'); return `${d}/${m}/${y}`; }
 function genderLabel(g) { return g === 'M' ? 'Male only' : g === 'F' ? 'Female only' : 'Male or female'; }
 
+function undo() {
+  if (!undoStack.length || dataProblem) return;
+  state = withDefaults(JSON.parse(undoStack.pop()));
+  ui.editCarer = null; ui.importPlan = null; ui.sickForm = null; ui.report = 'Undone the last change.';
+  save(true);
+  render();
+}
+document.getElementById('undoBtn').addEventListener('click', undo);
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && !/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) {
+    e.preventDefault();
+    undo();
+  }
+});
+
+// Data changed on another computer (we're view-only), or the editing lock changed hands.
+function reloadFromDisk() {
+  state = load();
+  lastSaved = stateJson(state);
+  undoStack.length = 0;
+  render();
+}
+if (desktop) {
+  desktop.onChanged(reloadFromDisk);
+  desktop.onLockChanged(i => {
+    const wasView = deskInfo.mode === 'view';
+    deskInfo = i;
+    if (wasView && i.mode === 'edit') reloadFromDisk(); else render();
+    if (!wasView && i.mode === 'view') alert(`${holderText()} is now editing CareSchedule, so this computer has switched to view only.`);
+  });
+  desktop.onConflict(name => alert(`Another computer saved CareSchedule data while you were editing (usually both opened it at the same moment).\n\nYour version has been kept. Theirs was saved in the data folder as ${name} – check it if they made changes.`));
+}
+
+function viewOnlyBanner() {
+  if (!deskInfo || deskInfo.mode !== 'view') return '';
+  const since = deskInfo.holder ? new Date(deskInfo.holder.since).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+  return `<div class="viewonly">👁 <b>View only</b> – ${esc(holderText())} has CareSchedule open${since ? ` (since ${esc(since)})` : ''}, so only one computer can make changes.
+    This screen updates when they save. <button class="btn" data-action="retryLock">Try again</button></div>`;
+}
+
 function render() {
+  document.getElementById('undoBtn').disabled = !undoStack.length;
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === ui.tab));
   const app = document.getElementById('app');
-  app.innerHTML = { schedule: viewSchedule, carers: viewCarers, runs: viewRuns, settings: viewSettings }[ui.tab]();
+  app.innerHTML = viewOnlyBanner() + { schedule: viewSchedule, carers: viewCarers, runs: viewRuns, leave: viewLeave, reports: viewReports, settings: viewSettings }[ui.tab]();
 }
 
 // ---------- Schedule ----------
@@ -853,6 +1375,8 @@ function viewSchedule() {
     return `<div class="panel">Add some <b>carers</b> and <b>runs</b> first, or load the sample data from <b>Settings &amp; Data</b>.</div>`;
   }
   const week = getWeek(state, ui.week);
+  const final = !!week.final;
+  const off = final ? 'disabled title="This week is finalised – reopen it to change it"' : '';
   const v = validate(state, ui.week);
   const head = DAYS.map((d, i) => `<th>${d}<br><span class="muted">${fmtDate(addDays(ui.week, i)).slice(0, 5)}</span></th>`).join('');
   const rows = state.runs.map(run => {
@@ -863,14 +1387,15 @@ function viewSchedule() {
       const cls = iss.some(i => i.level === 'error') ? 'err' : iss.length ? 'warn' : '';
       const slots = cell.slots.map((s, i) => `
         <div class="slot ${s.locked ? 'locked' : ''}">
-          ${carerSelect(run, d, s.c, `data-slot="${i}"`)}
-          <button class="lockbtn" title="${s.locked ? 'Locked – auto-fill keeps this' : 'Unlocked – auto-fill may change this'}" data-action="lock" data-run="${run.id}" data-day="${d}" data-slot="${i}">${s.locked ? '🔒' : '🔓'}</button>
+          ${carerSelect(run, d, s.c, `data-slot="${i}" ${off}`)}
+          <button class="lockbtn" ${off} title="${s.locked ? 'Locked – auto-fill keeps this' : 'Unlocked – auto-fill may change this'}" data-action="lock" data-run="${run.id}" data-day="${d}" data-slot="${i}">${s.locked ? '🔒' : '🔓'}</button>
         </div>`).join('');
       const shadow = (cell.shadow.c || cell.shadowOpen)
-        ? `<div class="slot shadow">${carerSelect(run, d, cell.shadow.c, 'data-slot="shadow"', 'Shadow / training')}</div>`
-        : `<button class="linkbtn" data-action="shadow" data-run="${run.id}" data-day="${d}">+ Shadow Carer</button>`;
+        ? `<div class="slot shadow">${carerSelect(run, d, cell.shadow.c, `data-slot="shadow" ${off}`, 'Shadow / training')}</div>`
+        : final ? '' : `<button class="linkbtn" data-action="shadow" data-run="${run.id}" data-day="${d}">+ Shadow Carer</button>`;
       const issues = iss.map(i => `<div class="${i.level === 'error' ? 'e' : 'w'}">${esc(i.msg)}</div>`).join('');
-      return `<td class="cell ${cls}">${slots}${shadow}<div class="issues">${issues}</div></td>`;
+      const findCover = cell.slots.map((sl, i) => sl.c ? '' : `<button class="linkbtn cover" data-action="findCover" data-run="${run.id}" data-day="${d}" data-slot="${i}">Find cover</button>`).find(Boolean) || '';
+      return `<td class="cell ${cls}">${slots}${findCover}${shadow}<div class="issues">${issues}</div></td>`;
     }).join('');
     return `<tr><th>${esc(run.name)}<br><span class="tag">${run.type === 'double' ? 'Double up' : 'Single'}</span><span class="tag">${run.gender === 'any' ? 'M/F' : run.gender === 'M' ? 'Male' : 'Female'}</span>${isSpecific(run) ? `<span class="tag" title="${esc(run.allowed.map(id => (byId(id) || {}).name).join(', '))}">${run.allowed.length} named carers</span>` : ''}${needsDriver(run) ? '' : '<span class="tag nodrv">No driver needed</span>'}</th>${tds}</tr>`;
   }).join('');
@@ -896,7 +1421,7 @@ function viewSchedule() {
     const past = c.agency ? '<span class="muted">agency – only used to fill gaps</span>' : known.length
       ? `${weekendsOff} of ${known.length} weekends off · ${weekendBadge(s.weekendStreak)}<br><span class="muted">${pair}</span>`
       : '<span class="muted">no history yet</span>';
-    return `<tr><td>${esc(c.name)} <span class="tag ${c.gender}">${c.gender}</span><span class="tag ${c.driver ? 'drv' : 'nodrv'}">${c.driver ? 'Driver' : 'Non-driver'}</span>${c.agency ? '<span class="tag agency">Agency</span>' : ''}${!c.agency && s.weekendStreak >= 2 ? '<span class="tag flag">⚑ Weekend off priority</span>' : ''}</td>
+    return `<tr><td>${esc(c.name)} <span class="tag ${c.gender}">${c.gender}</span><span class="tag ${c.driver ? 'drv' : 'nodrv'}">${c.driver ? 'Driver' : 'Non-driver'}</span>${c.agency ? '<span class="tag agency">Agency</span>' : ''}${traineeTag(c)}${!c.agency && s.weekendStreak >= 2 ? '<span class="tag flag">⚑ Weekend off priority</span>' : ''}</td>
       <td class="${c.agency ? '' : cls}">${c.agency ? `${s.count} (max ${s.contracted})` : `${s.count} / ${s.contracted}${c.overtime ? ' (+1 OT)' : ''}`}</td>${days}<td>${past}</td></tr>`;
   };
   const activeCarers = sortedCarers().filter(c => c.active !== false);
@@ -914,16 +1439,31 @@ function viewSchedule() {
       <button class="btn" data-action="nextWeek">▶</button>
       <span style="flex:1"></span>
       <label><input type="checkbox" id="secondPass" ${state.settings.secondPass ? 'checked' : ''}> Double pass</label>
-      <button class="btn primary" data-action="autofill">Auto-fill week</button>
-      <button class="btn" data-action="clearUnlocked">Clear unlocked</button>
-      <button class="btn danger" data-action="clearAll">Clear all</button>
-      <button class="btn" data-action="copyPrev">Copy previous week</button>
+      <button class="btn primary" data-action="autofill" ${off}>Auto-fill week</button>
+      <span class="multi"><button class="btn" data-action="planWeeks" title="Auto-fill this week and the ones after it, in date order (finalised weeks are skipped)">Auto-fill</button>
+        <select id="planCount">${[2, 4, 6, 8].map(n => `<option value="${n}" ${ui.planCount === n ? 'selected' : ''}>${n} weeks</option>`).join('')}</select></span>
+      <button class="btn" data-action="fillGaps" ${off || 'title="Only fill empty slots – nobody already on the schedule is moved"'}>Fill gaps only</button>
+      <button class="btn" data-action="sickForm">🤒 Report sickness</button>
+      <button class="btn" data-action="clearUnlocked" ${off}>Clear unlocked</button>
+      <button class="btn danger" data-action="clearAll" ${off}>Clear all</button>
+      <button class="btn" data-action="copyPrev" ${off}>Copy previous week</button>
+      <button class="btn ${final ? '' : 'final'}" data-action="${final ? 'reopenWeek' : 'finaliseWeek'}">${final ? 'Reopen week' : '✔ Finalise week'}</button>
       <button class="btn" data-action="csv">Export CSV</button>
+      <select id="printWhat" title="What to print">
+        <option value="runs" ${ui.printWhat === 'runs' ? 'selected' : ''}>Run rota</option>
+        <option value="carers" ${ui.printWhat === 'carers' ? 'selected' : ''}>Carer rota (for the wall)</option>
+        <option value="sheets" ${ui.printWhat === 'sheets' ? 'selected' : ''}>A sheet for each carer</option>
+      </select>
       <button class="btn" data-action="print">Print</button>
     </div>
+    ${final ? `<div class="finalbar">✔ <b>This week is finalised.</b> Auto-fill, Fill gaps only, clearing and editing are switched off so it can't be changed by accident.
+      Sickness cover (Report sickness / Find cover) still works. Use <b>Reopen week</b> to make other changes.</div>` : ''}
     <div class="legend">Choosing a carer by hand locks the slot (🔒) so auto-fill won't change it. Click the lock to unlock.
+      <b>Fill gaps only</b> fills empty slots without moving anyone.
       Auto-fill is shuffled each time, so press it again for a different version.
       ${errs ? `<b class="over">${errs} problem(s)</b>` : '<b class="met">No problems</b>'}${warns ? `, <b class="under">${warns} warning(s)</b>` : ''}</div>
+    ${ui.sickForm ? sickFormView() : ''}
+    ${coverPanel()}
     ${ui.report ? `<div class="report panel" style="margin-top:8px">${esc(ui.report)}</div>` : ''}
     <div class="grid-wrap"><table class="grid"><colgroup><col class="runcol">${DAYS.map(() => '<col>').join('')}</colgroup><thead><tr><th>Run</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>
   </div>
@@ -931,7 +1471,52 @@ function viewSchedule() {
     <h3 style="margin-top:0">Carer summary – days booked / contracted</h3>
     <div class="grid-wrap"><table><thead><tr><th>Carer</th><th>Days</th>${DAYS.map(d => `<th>${d}</th>`).join('')}<th>Previous ${HISTORY_WEEKS} weeks</th></tr></thead><tbody>${summary}</tbody></table></div>
   </div>
-  <div id="print-area">${printTable()}</div>`;
+  <div id="print-area">${printView(ui.printWhat)}</div>`;
+}
+
+function sickFormView() {
+  const f = ui.sickForm;
+  return `<div class="panel sick" id="sickForm" style="margin-top:8px">
+    <h3 style="margin-top:0">Report sickness</h3>
+    <div class="row">
+      <label>Carer <select data-f="sickCarer"><option value="">Choose…</option>${sortedCarers().filter(c => c.active !== false)
+        .map(c => `<option value="${c.id}" ${c.id === f.carer ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+      <label>Off sick from <input type="date" data-f="sickFrom" value="${f.from}"></label>
+      <label>to <input type="date" data-f="sickTo" value="${f.to}"></label>
+      <button class="btn primary" data-action="sickSave">Mark sick &amp; find cover</button>
+      <button class="btn" data-action="sickCancel">Cancel</button>
+    </div>
+    <div class="muted">They are taken off every shift in those dates (locked ones too) and you get cover suggestions for each one.</div>
+  </div>`;
+}
+
+// Suggested cover for each slot in ui.cover that is still empty.
+function coverPanel() {
+  ui.cover = ui.cover.filter(x => {
+    const run = runById(x.runId);
+    const sl = run && state.weeks[x.week] && run.days[x.d] && getCell(state.weeks[x.week], run, x.d).slots[x.idx];
+    return sl && !sl.c;
+  });
+  if (!ui.cover.length) return '';
+  const items = ui.cover.map((x, k) => {
+    const run = runById(x.runId);
+    const { ok, no } = suggestCover(state, x.week, x.runId, x.d, x.idx);
+    const picks = ok.slice(0, 6).map(o => `<button class="btn pick" data-action="coverPick" data-k="${k}" data-c="${o.carer.id}">
+        <b>${esc(o.carer.name)}</b>${o.notes.length ? `<br><span class="muted">${esc(o.notes.join(' · '))}</span>` : ''}</button>`).join('');
+    return `<div class="coveritem">
+      <div><b>${esc(run.name)} – ${DAYS[x.d]} ${fmtDate(addDays(x.week, x.d))}</b>
+        <button class="linkbtn" data-action="coverSkip" data-k="${k}">leave empty</button></div>
+      <div class="picks">${picks || '<span class="over">No one can cover this without breaking a rule – see below, or use agency staff.</span>'}</div>
+      ${no.length ? `<details><summary class="muted">Why others can't (${no.length})</summary><ul class="why">${no
+        .map(n => `<li><b>${esc(n.carer.name)}</b> – ${esc(n.reason)}</li>`).join('')}</ul></details>` : ''}
+    </div>`;
+  }).join('');
+  return `<div class="panel cover" style="margin-top:8px"><h3 style="margin-top:0">Cover needed (${ui.cover.length})</h3>
+    <div class="muted" style="margin-bottom:6px">Best options first. Everyone listed can do it without breaking any rule. Click a name to put them on.</div>${items}</div>`;
+}
+
+function traineeTag(c) {
+  return c.traineeUntil && c.traineeUntil >= ui.week ? ` <span class="tag trainee">Trainee until ${fmtDate(c.traineeUntil).slice(0, 5)}</span>` : '';
 }
 
 function weekendBadge(streak) {
@@ -965,6 +1550,58 @@ function carerSelect(run, d, selected, attrs, placeholder) {
   const chosen = selected && byId(selected);
   const title = chosen ? `${chosen.name} (${chosen.gender === 'M' ? 'male' : 'female'}, ${chosen.driver ? 'driver' : 'non-driver'}${chosen.agency ? ', agency' : ''})` : '';
   return `<select data-action="assign" data-run="${run.id}" data-day="${d}" title="${esc(title)}" ${attrs}><option value="">${placeholder || '— empty —'}</option>${opts}</select>`;
+}
+
+// What to print: 'runs' (run × day), 'carers' (carer × day, for the wall) or 'sheets' (one page per carer).
+function printView(what) {
+  if (what === 'carers') return printCarerRota();
+  if (what === 'sheets') return printCarerSheets();
+  return printTable();
+}
+
+// For each carer and day this week: { run, with: [names], shadow } or null
+function carerWeek(c) {
+  const week = getWeek(state, ui.week);
+  return DAYS.map((_, d) => {
+    for (const r of state.runs) {
+      if (!r.days[d]) continue;
+      const cell = getCell(week, r, d);
+      const ids = cell.slots.map(s => s.c);
+      if (ids.includes(c.id) || cell.shadow.c === c.id) {
+        return { run: r.name, shadow: cell.shadow.c === c.id, with: cellIds(cell).filter(id => id !== c.id).map(id => (byId(id) || {}).name).filter(Boolean) };
+      }
+    }
+    return null;
+  });
+}
+
+function offLabel(c, d) {
+  const st = carerStatus(c, ui.week, d);
+  return st.ok ? 'Off' : st.label;
+}
+
+function printCarerRota() {
+  const rows = sortedCarers().filter(c => c.active !== false).map(c => {
+    const wk = carerWeek(c);
+    if (c.agency && !wk.some(Boolean)) return '';
+    return `<tr><th>${esc(c.name)}${c.agency ? ' (agency)' : ''}</th>${wk.map((x, d) => x
+      ? `<td><b>${esc(x.run)}</b>${x.shadow ? ' (shadow)' : ''}${x.with.length ? `<br><small>with ${esc(x.with.join(', '))}</small>` : ''}</td>`
+      : `<td class="muted">${esc(offLabel(c, d))}</td>`).join('')}</tr>`;
+  }).join('');
+  return `<h2>Carer rota – week commencing ${fmtDate(ui.week)}</h2>
+    <table><thead><tr><th>Carer</th>${DAYS.map((d, i) => `<th>${d} ${fmtDate(addDays(ui.week, i)).slice(0, 5)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function printCarerSheets() {
+  return sortedCarers().filter(c => c.active !== false).map(c => ({ c, wk: carerWeek(c) })).filter(x => x.wk.some(Boolean)).map(({ c, wk }) => `
+    <section class="sheet">
+      <h2>${esc(c.name)} – week commencing ${fmtDate(ui.week)}</h2>
+      <p>${wk.filter(Boolean).length} day(s) working</p>
+      <table><thead><tr><th>Day</th><th>Date</th><th>Run</th><th>Working with</th></tr></thead><tbody>
+      ${wk.map((x, d) => `<tr><td>${DAYS[d]}</td><td>${fmtDate(addDays(ui.week, d))}</td>
+        ${x ? `<td><b>${esc(x.run)}</b>${x.shadow ? ' (shadow / training)' : ''}</td><td>${esc(x.with.join(', ') || '—')}</td>` : `<td colspan="2" class="muted">${esc(offLabel(c, d))}</td>`}</tr>`).join('')}
+      </tbody></table>
+    </section>`).join('') || '<p>No one is on the schedule this week.</p>';
 }
 
 function printTable() {
@@ -1029,6 +1666,7 @@ function assign(runId, d, slot, carerId) {
     }
   }
   target.c = carerId; target.override = override;
+  if (slot === 'shadow') delete target.auto; // chosen by hand – auto-fill keeps it
   if (slot !== 'shadow') target.locked = true;
   return true;
 }
@@ -1056,6 +1694,195 @@ function download(filename, text, type) {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
+// ---------- Excel (.xlsx) and CSV files – written and read here, so it all works offline ----------
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+  return t;
+})();
+function crc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+// [{ name, text }] -> an uncompressed zip file (Uint8Array)
+function zipFiles(files) {
+  const enc = new TextEncoder(), chunks = [], central = [];
+  let offset = 0;
+  for (const f of files) {
+    const name = enc.encode(f.name), data = enc.encode(f.text), crc = crc32(data);
+    const head = (size, sig) => { const v = new DataView(new ArrayBuffer(size)); v.setUint32(0, sig, true); return v; };
+    const local = head(30, 0x04034b50);
+    local.setUint16(4, 20, true); local.setUint16(6, 0x0800, true); local.setUint16(12, 33, true);
+    local.setUint32(14, crc, true); local.setUint32(18, data.length, true); local.setUint32(22, data.length, true); local.setUint16(26, name.length, true);
+    const cd = head(46, 0x02014b50);
+    cd.setUint16(4, 20, true); cd.setUint16(6, 20, true); cd.setUint16(8, 0x0800, true); cd.setUint16(14, 33, true);
+    cd.setUint32(16, crc, true); cd.setUint32(20, data.length, true); cd.setUint32(24, data.length, true); cd.setUint16(28, name.length, true);
+    cd.setUint32(42, offset, true);
+    chunks.push(new Uint8Array(local.buffer), name, data);
+    central.push(new Uint8Array(cd.buffer), name);
+    offset += 30 + name.length + data.length;
+  }
+  const cdSize = central.reduce((n, c) => n + c.length, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true);
+  end.setUint32(12, cdSize, true); end.setUint32(16, offset, true);
+  const all = chunks.concat(central, [new Uint8Array(end.buffer)]);
+  const out = new Uint8Array(all.reduce((n, c) => n + c.length, 0));
+  let p = 0;
+  for (const c of all) { out.set(c, p); p += c.length; }
+  return out;
+}
+
+// zip file (ArrayBuffer) -> Map(name -> Uint8Array)
+async function unzip(buf) {
+  const v = new DataView(buf), dec = new TextDecoder(), out = new Map();
+  let end = -1;
+  for (let i = buf.byteLength - 22; i >= Math.max(0, buf.byteLength - 65557); i--) if (v.getUint32(i, true) === 0x06054b50) { end = i; break; }
+  if (end < 0) throw new Error('This is not an Excel (.xlsx) file.');
+  let p = v.getUint32(end + 16, true);
+  for (let n = v.getUint16(end + 10, true); n > 0; n--) {
+    const method = v.getUint16(p + 10, true), size = v.getUint32(p + 20, true);
+    const nameLen = v.getUint16(p + 28, true), extraLen = v.getUint16(p + 30, true), commentLen = v.getUint16(p + 32, true);
+    const local = v.getUint32(p + 42, true);
+    const name = dec.decode(new Uint8Array(buf, p + 46, nameLen));
+    const start = local + 30 + v.getUint16(local + 26, true) + v.getUint16(local + 28, true);
+    let data = new Uint8Array(buf, start, size);
+    if (method === 8) data = new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+    else if (method !== 0) throw new Error('This Excel file uses a format the app cannot read – save it again as .xlsx or CSV.');
+    out.set(name, data);
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  return out;
+}
+
+const xmlEsc = t => String(t).replace(/[<>&"]/g, ch => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[ch]));
+const colLetter = i => (i >= 26 ? colLetter(Math.floor(i / 26) - 1) : '') + String.fromCharCode(65 + (i % 26));
+
+// sheets: [{ name, rows, widths }] -> .xlsx bytes. The first row of each sheet is bold and frozen.
+function makeXlsx(sheets) {
+  const NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+  const REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  const files = [
+    { name: '[Content_Types].xml', text: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}</Types>` },
+    { name: '_rels/.rels', text: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${REL}/officeDocument" Target="xl/workbook.xml"/></Relationships>` },
+    { name: 'xl/workbook.xml', text: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="${NS}" xmlns:r="${REL}"><sheets>${sheets.map((sh, i) => `<sheet name="${xmlEsc(sh.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets></workbook>` },
+    { name: 'xl/_rels/workbook.xml.rels', text: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="${REL}/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')}<Relationship Id="rId${sheets.length + 1}" Type="${REL}/styles" Target="styles.xml"/></Relationships>` },
+    { name: 'xl/styles.xml', text: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="${NS}"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>` },
+  ];
+  sheets.forEach((sh, i) => {
+    const rows = sh.rows.map((row, r) => `<row r="${r + 1}">${row.map((v, c) => {
+      const ref = colLetter(c) + (r + 1), style = r === 0 ? ' s="1"' : sh.wrap ? ' s="2"' : '';
+      if (typeof v === 'number') return `<c r="${ref}"${style}><v>${v}</v></c>`;
+      return `<c r="${ref}"${style} t="inlineStr"><is><t xml:space="preserve">${xmlEsc(v == null ? '' : v)}</t></is></c>`;
+    }).join('')}</row>`).join('');
+    const cols = (sh.widths || []).map((w, c) => `<col min="${c + 1}" max="${c + 1}" width="${w}" customWidth="1"/>`).join('');
+    files.push({ name: `xl/worksheets/sheet${i + 1}.xml`, text: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="${NS}"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>${cols ? `<cols>${cols}</cols>` : ''}<sheetData>${rows}</sheetData></worksheet>` });
+  });
+  return zipFiles(files);
+}
+
+// .xlsx bytes -> rows of the first sheet (array of arrays of strings)
+async function readXlsx(buf) {
+  const files = await unzip(buf), dec = new TextDecoder(), parse = name => {
+    const f = files.get(name);
+    return f ? new DOMParser().parseFromString(dec.decode(f), 'application/xml') : null;
+  };
+  const all = (doc, tag) => doc ? [...doc.getElementsByTagNameNS('*', tag)] : [];
+  const wb = parse('xl/workbook.xml');
+  if (!wb) throw new Error('This is not an Excel (.xlsx) file.');
+  const first = all(wb, 'sheet')[0];
+  const rid = first && [...first.attributes].find(a => a.localName === 'id' && a.prefix).value;
+  const rel = all(parse('xl/_rels/workbook.xml.rels'), 'Relationship').find(r => r.getAttribute('Id') === rid);
+  let target = rel ? rel.getAttribute('Target') : 'worksheets/sheet1.xml';
+  target = target.startsWith('/') ? target.slice(1) : 'xl/' + target;
+  const shared = all(parse('xl/sharedStrings.xml'), 'si').map(si => all(si, 't').map(t => t.textContent).join(''));
+  const rows = [];
+  for (const row of all(parse(target), 'row')) {
+    const r = Number(row.getAttribute('r')) - 1 || rows.length, out = [];
+    for (const c of all(row, 'c')) {
+      const col = (c.getAttribute('r') || '').replace(/\d+/g, '').split('').reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1;
+      const t = c.getAttribute('t'), val = (all(c, 'v')[0] || {}).textContent;
+      out[col < 0 ? out.length : col] = t === 's' ? shared[Number(val)] : t === 'inlineStr' ? all(c, 't').map(x => x.textContent).join('')
+        : t === 'b' ? (val === '1' ? 'Yes' : 'No') : val == null ? '' : val;
+    }
+    rows[r] = Array.from(out, x => x == null ? '' : x);
+  }
+  return Array.from(rows, r => r || []);
+}
+
+// CSV text -> rows (handles quotes, commas or semicolons, and Excel's byte-order mark)
+function readCsv(text) {
+  text = text.replace(/^﻿/, '');
+  const firstLine = text.split(/\r?\n/)[0];
+  const sep = (firstLine.match(/;/g) || []).length > (firstLine.match(/,/g) || []).length ? ';' : ',';
+  const rows = [];
+  let row = [], cell = '', quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++; } else if (ch === '"') quoted = false; else cell += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === sep) { row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(cell); rows.push(row); row = []; cell = ''; }
+    else cell += ch;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows;
+}
+
+function carerHelpSheet() {
+  return { name: 'How to fill in', wrap: true, widths: [34, 90], rows: [['Column', 'What to put']].concat(
+    CARER_COLUMNS.map(c => [c.head, c.help]),
+    [['', ''], ['Example rows', 'Rows whose name starts with "Example:" are ignored – delete them or leave them.'],
+      ['Existing carers', 'A row with the same name as an existing carer updates that carer. Blank cells keep what is already set.'],
+      ['Importing', 'Save the file (Excel .xlsx or CSV), then in CareSchedule go to Carers → Import from Excel. You will see what will change before anything is imported.']]) };
+}
+const CARER_WIDTHS = [24, 14, 15, 14, 18, 18, 22, 14, 22, 18, 26, 30, 18];
+
+function downloadCarerTemplate() {
+  const example = [
+    ['Example: Jane Smith', 'F', 'Yes', 5, 'No', 'Both', 'All', 'No', '', 'No', '', 'Example row – ignored when importing', ''],
+    ['Example: Tom Brown', 'M', 'No', 4, 'Yes', 'Doubles', 'Mon-Fri', 'No', state.runs[0] ? state.runs[0].name : '', 'No', 'Example: Jane Smith', 'Example row – ignored when importing', ukDate(addDays(todayIso(), 28))],
+  ];
+  download('CareSchedule-carers-template.xlsx', makeXlsx([{ name: 'Carers', rows: [CARER_COLUMNS.map(c => c.head)].concat(example), widths: CARER_WIDTHS }, carerHelpSheet()]),
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+}
+
+function downloadCarers() {
+  download(`CareSchedule-carers-${todayIso()}.xlsx`, makeXlsx([{ name: 'Carers', rows: carersToRows(state), widths: CARER_WIDTHS }, carerHelpSheet()]),
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+}
+
+async function readCarerFile(file) {
+  if (/\.xlsx$/i.test(file.name)) return readXlsx(await file.arrayBuffer());
+  if (/\.(csv|txt)$/i.test(file.name)) return readCsv(await file.text());
+  throw new Error('Please choose an Excel (.xlsx) or CSV file. Older .xls files need saving again as .xlsx first.');
+}
+
+function importPanel() {
+  const ip = ui.importPlan;
+  if (!ip) return '';
+  const { plan } = ip;
+  const list = (items, cls) => items.length ? `<ul class="why ${cls || ''}">${items.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : '';
+  const changes = plan.add.length + plan.update.length;
+  return `<div class="panel cover">
+    <h3 style="margin-top:0">Import from ${esc(ip.fileName)}</h3>
+    <p><b>${plan.add.length}</b> new carer(s)${plan.add.length ? ': ' + esc(plan.add.map(c => c.name).join(', ')) : ''}<br>
+      <b>${plan.update.length}</b> existing carer(s) updated${plan.update.length ? ': ' + esc(plan.update.map(u => `${u.name} (${u.labels.join(', ')})`).join('; ')) : ''}
+      ${plan.unchanged ? `<br><span class="muted">${plan.unchanged} carer(s) already up to date</span>` : ''}
+      ${plan.skipped ? `<br><span class="muted">${plan.skipped} example row(s) ignored</span>` : ''}
+      <br><span class="muted">Carers not in the file are left as they are.</span></p>
+    ${plan.errors.length ? `<p class="over">${plan.errors.length} row(s) can't be imported – fix them in the file and import again, or import the rest now:</p>${list(plan.errors, 'e')}` : ''}
+    ${plan.warnings.length ? `<p class="under">Check:</p>${list(plan.warnings)}` : ''}
+    <div class="toolbar">
+      ${changes ? `<button class="btn primary" data-action="importApply">Import ${changes} carer(s)</button>` : ''}
+      <button class="btn" data-action="importCancel">${changes ? 'Cancel' : 'Close'}</button>
+    </div>
+  </div>`;
+}
+
 // ---------- Carers ----------
 function blankCarer(agency) {
   return { id: uid(), name: '', gender: 'F', driver: false, daysPerWeek: 5, overtime: false, runTypes: 'both', available: DAYS.map(() => true), leave: [], notes: '', active: true, agency: !!agency };
@@ -1067,7 +1894,7 @@ function viewCarers() {
     const today = todayIso();
     const current = (c.leave || []).filter(l => (l.to || l.from) >= today).map(l => `${l.type === 'AL' ? 'AL' : 'Sick'} ${fmtDate(l.from)}${l.to && l.to !== l.from ? '–' + fmtDate(l.to) : ''}`).join('<br>');
     return `<tr class="${c.active === false ? 'muted' : ''}">
-      <td>${esc(c.name)}${c.active === false ? ' (inactive)' : ''}${!c.agency && weekendStreak(hist[c.id]) >= 2 ? ' <span class="tag flag">⚑ Weekend off priority</span>' : ''}
+      <td>${esc(c.name)}${c.active === false ? ' (inactive)' : ''}${traineeTag(c)}${!c.agency && weekendStreak(hist[c.id]) >= 2 ? ' <span class="tag flag">⚑ Weekend off priority</span>' : ''}
         ${notWithNames(c) ? `<br><span class="muted">Not with: ${esc(notWithNames(c))}</span>` : ''}</td>
       <td><span class="tag ${c.gender}">${c.gender === 'M' ? 'Male' : 'Female'}</span></td>
       <td><span class="tag ${c.driver ? 'drv' : 'nodrv'}">${c.driver ? 'Driver' : 'Non-driver'}</span></td>
@@ -1083,9 +1910,13 @@ function viewCarers() {
   const agencyStaff = sortedCarers().filter(c => c.agency);
   const head = last => `<thead><tr><th>Name</th><th>Gender</th><th>Driver</th><th>${last ? 'Max days / week' : 'Days / week'}</th><th>Run types</th><th>Can work</th><th>Upcoming leave / sickness</th><th>${last ? 'Weekends' : `Weekends (w/c ${fmtDate(ui.week)})`}</th><th></th></tr></thead>`;
   return `
+  ${importPanel()}
   ${ui.editCarer ? carerForm(ui.editCarer) : ''}
   <div class="panel">
     <div class="toolbar"><h3 style="margin:0;flex:1">Carers (${regular.length})</h3>
+      <button class="btn" data-action="carerTemplate" title="A blank Excel sheet with the right columns and instructions">Download Excel template</button>
+      <button class="btn" data-action="carerExport" title="Your current carers in the same layout – edit in Excel and import again">Download carers (Excel)</button>
+      <label class="btn">Import from Excel <input type="file" id="importCarers" accept=".xlsx,.csv" hidden></label>
       <button class="btn primary" data-action="newCarer">+ Add carer</button></div>
     <table>${head(false)}
     <tbody>${regular.map(row).join('') || '<tr><td colspan="9" class="muted">No carers yet.</td></tr>'}</tbody></table>
@@ -1129,6 +1960,9 @@ function carerForm(c) {
         <option value="single" ${c.runTypes === 'single' ? 'selected' : ''}>Singles only</option></select></label>
       <label><input type="checkbox" data-f="active" ${c.active !== false ? 'checked' : ''}> Active</label>
     </div>
+    <div class="row"><label>Trainee – only shadows experienced carers until <input type="date" data-f="traineeUntil" value="${c.traineeUntil || ''}"></label>
+      <span class="muted">leave blank if not a new starter; after this date they work normally</span>
+    </div>
     <div class="row" style="align-items:flex-start"><b>Preferred runs:</b>
       <details><summary>${esc(preferredNames(c, state.runs) || 'None – choose…')}</summary>
         ${state.runs.map(r => `<label style="display:block"><input type="checkbox" data-f="preferredRuns" data-r="${r.id}" ${(c.preferredRuns || []).includes(r.id) ? 'checked' : ''}> ${esc(r.name)}</label>`).join('')}
@@ -1168,6 +2002,7 @@ function readCarerForm() {
   c.preferredRuns = [...f.querySelectorAll('[data-f="preferredRuns"]:checked')].map(x => x.dataset.r);
   c.onlyPreferred = val('onlyPreferred').checked;
   c.active = val('active').checked;
+  c.traineeUntil = val('traineeUntil').value || undefined;
   c.notes = val('notes').value;
   c.notWith = [...f.querySelectorAll('[data-f="notWith"]:checked')].map(x => x.dataset.c);
   c.available = DAYS.map((_, i) => f.querySelector(`[data-f="avail"][data-i="${i}"]`).checked);
@@ -1211,6 +2046,116 @@ function viewRuns() {
   </div>`;
 }
 
+// ---------- Leave planner ----------
+function viewLeave() {
+  const f = ui.leaveForm || { carer: '', type: 'AL', from: '', to: '' };
+  const regulars = sortedCarers().filter(c => c.active !== false && !c.agency);
+  const impact = ui.leaveCheck;
+  const verdict = impact ? `
+    <div class="panel ${impact.problemDays ? 'sick' : 'cover'}" style="margin-top:8px">
+      <h3 style="margin-top:0">${impact.problemDays
+        ? `⚠ ${impact.problemDays} day(s) would be short of staff`
+        : '✔ Cover looks fine for these dates'}</h3>
+      <div class="muted" style="margin-bottom:6px">An estimate: each available carer counts as their share of the week (days per week ÷ days available).
+        Agency staff aren't counted. Already off: shown for each day.</div>
+      <table class="leavecheck"><thead><tr><th>Day</th><th>Carers likely around / shifts</th><th>Problems</th><th>Already off</th></tr></thead><tbody>
+      ${impact.days.map(x => `<tr class="${x.short.length ? 'err' : ''}"><td>${DAYS[(new Date(x.date + 'T12:00:00Z').getUTCDay() + 6) % 7]} ${fmtDate(x.date)}</td>
+        <td>${(Math.round(x.expected * 10) / 10)} / ${x.shifts}</td><td>${esc(x.short.join('; ')) || '—'}</td><td>${esc(x.off.join(', ')) || '—'}</td></tr>`).join('')}
+      </tbody></table>
+      <div class="toolbar" style="margin-top:8px">
+        <button class="btn primary" data-action="leaveAdd">${impact.problemDays ? 'Add leave anyway' : 'Add leave'}</button>
+        <button class="btn" data-action="leaveCancel">Cancel</button>
+      </div>
+    </div>` : '';
+
+  // calendar: who is off over the next weeks, with days likely to be short highlighted
+  const n = ui.leaveWeeks, start = ui.week, end = addDays(start, 7 * n - 1);
+  const dates = Array.from({ length: 7 * n }, (_, i) => addDays(start, i));
+  const shortDays = new Set(leaveImpact(state, null, start, end).days.filter(x => x.short.length).map(x => x.date));
+  const head = dates.map(dt => {
+    const d = (new Date(dt + 'T12:00:00Z').getUTCDay() + 6) % 7;
+    return `<th class="${shortDays.has(dt) ? 'short' : ''} ${d >= 5 ? 'we' : ''}" title="${shortDays.has(dt) ? 'Likely to be short of staff' : ''}">${DAYS[d][0]}<br>${dt.slice(8)}</th>`;
+  }).join('');
+  const rows = regulars.map(c => `<tr><th>${esc(c.name)}${c.agency ? ' <span class="muted">(agency)</span>' : ''}</th>${dates.map(dt => {
+    const l = leaveOn(c, dt);
+    const d = (new Date(dt + 'T12:00:00Z').getUTCDay() + 6) % 7;
+    if (l) return `<td class="lv ${l.type === 'SICK' ? 'sk' : 'al'}" title="${l.type === 'SICK' ? 'Sickness' : 'Annual leave'}">${l.type === 'SICK' ? 'S' : 'AL'}</td>`;
+    if (!c.available[d]) return '<td class="lv na" title="Not available">–</td>';
+    return `<td class="${d >= 5 ? 'we' : ''}"></td>`;
+  }).join('')}</tr>`).join('');
+
+  return `
+  <div class="panel">
+    <h3 style="margin-top:0">Book leave</h3>
+    <div class="row" id="leaveForm">
+      <label>Carer <select data-f="lvCarer"><option value="">Choose…</option>${regulars.map(c => `<option value="${c.id}" ${c.id === f.carer ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+      <label>Type <select data-f="lvType"><option value="AL" ${f.type === 'AL' ? 'selected' : ''}>Annual leave</option><option value="SICK" ${f.type === 'SICK' ? 'selected' : ''}>Sickness</option></select></label>
+      <label>From <input type="date" data-f="lvFrom" value="${f.from}"></label>
+      <label>To <input type="date" data-f="lvTo" value="${f.to}"></label>
+      <button class="btn primary" data-action="leaveCheck">Check cover</button>
+    </div>
+    <div class="muted">Check cover shows, day by day, whether there would still be enough carers, drivers and male / female staff before you add it.
+      Leave can also be added on the carer's own page.</div>
+    ${verdict}
+  </div>
+  <div class="panel">
+    <div class="toolbar"><h3 style="margin:0;flex:1">Who's off – from w/c ${fmtDate(start)}</h3>
+      <button class="btn" data-action="prevWeek">◀</button><button class="btn" data-action="nextWeek">▶</button>
+      <label>Show <select id="leaveWeeks">${[4, 8, 13].map(k => `<option value="${k}" ${n === k ? 'selected' : ''}>${k} weeks</option>`).join('')}</select></label></div>
+    <div class="legend"><span class="lvkey al">AL</span> annual leave <span class="lvkey sk">S</span> sickness <span class="lvkey na">–</span> not available
+      <span class="lvkey short">&nbsp;</span> day likely to be short of staff</div>
+    <div class="grid-wrap"><table class="leavecal"><thead><tr><th>Carer</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>
+  </div>`;
+}
+
+function readLeaveForm() {
+  const f = document.getElementById('leaveForm');
+  const v = k => f.querySelector(`[data-f="${k}"]`).value;
+  ui.leaveForm = { carer: v('lvCarer'), type: v('lvType'), from: v('lvFrom'), to: v('lvTo') || v('lvFrom') };
+  if (ui.leaveForm.to < ui.leaveForm.from) ui.leaveForm.to = ui.leaveForm.from;
+  return ui.leaveForm;
+}
+
+// ---------- Reports ----------
+function viewReports() {
+  const n = ui.reportWeeks;
+  const rep = fairnessReport(state, ui.week, n);
+  const rows = rep.rows.filter(r => r.carer.active !== false).sort((a, b) => a.carer.name.localeCompare(b.carer.name));
+  const avg = k => rows.length ? rows.reduce((t, r) => t + r[k], 0) / rows.length : 0;
+  const avgWeekendShare = rows.length ? rows.reduce((t, r) => t + (r.weekendsTotal ? r.weekendsWorked / r.weekendsTotal : 0), 0) / rows.length : 0;
+  const flag = (cond, text) => cond ? ` class="under" title="${text}"` : '';
+  const table = rows.map(r => {
+    const share = r.weekendsTotal ? r.weekendsWorked / r.weekendsTotal : 0;
+    return `<tr><td>${esc(r.carer.name)}</td>
+      <td>${r.days} / ${r.due}</td>
+      <td${flag(r.short >= 3, 'Several days short of their profile')}>${r.short}</td>
+      <td${flag(r.overtime >= 3, 'Several overtime days')}>${r.overtime}</td>
+      <td${flag(r.weekendsTotal >= 3 && share - avgWeekendShare >= 0.2, 'Working more weekends than most')}>${r.weekendsWorked} of ${r.weekendsTotal}</td>
+      <td${flag(r.longestWeekendRun >= 3, '3 or more weekends in a row')}>${r.longestWeekendRun}</td>
+      <td>${r.sickDays}</td><td>${r.leaveDays}</td><td>${r.shadowDays || ''}</td></tr>`;
+  }).join('');
+  return `
+  <div class="panel">
+    <div class="toolbar"><h3 style="margin:0;flex:1">Fairness report – ${rep.weeks.length} week(s) with schedules, up to w/c ${fmtDate(ui.week)}</h3>
+      <button class="btn" data-action="prevWeek">◀</button><button class="btn" data-action="nextWeek">▶</button>
+      <label>Period <select id="reportWeeks">${[4, 8, 13, 26].map(k => `<option value="${k}" ${n === k ? 'selected' : ''}>last ${k} weeks</option>`).join('')}</select></label>
+      <button class="btn" data-action="reportExcel">Download (Excel)</button></div>
+    <p class="muted" style="margin-top:0">Amber = worth a look: 3+ days short of their profile, 3+ overtime days, a weekend share well above
+      average, or 3+ weekends in a row. Averages: ${avg('days').toFixed(1)} days, ${avg('weekendsWorked').toFixed(1)} weekends, ${avg('overtime').toFixed(1)} overtime days.</p>
+    ${rep.weeks.length ? `<div class="grid-wrap"><table><thead><tr><th>Carer</th><th>Days worked / due</th><th>Days short</th><th>Overtime days</th>
+      <th>Weekends worked</th><th>Most weekends in a row</th><th>Sick days</th><th>Annual leave days</th><th>Shadow days</th></tr></thead>
+      <tbody>${table}</tbody></table></div>` : '<p>No schedules in this period yet.</p>'}
+  </div>`;
+}
+
+function downloadReport() {
+  const rep = fairnessReport(state, ui.week, ui.reportWeeks);
+  const rows = [['Carer', 'Days worked', 'Days due', 'Days short', 'Overtime days', 'Weekends worked', 'Weekends in period', 'Most weekends in a row', 'Sick days', 'Annual leave days', 'Shadow days']]
+    .concat(rep.rows.filter(r => r.carer.active !== false).map(r => [r.carer.name, r.days, r.due, r.short, r.overtime, r.weekendsWorked, r.weekendsTotal, r.longestWeekendRun, r.sickDays, r.leaveDays, r.shadowDays]));
+  download(`CareSchedule-fairness-${ui.week}.xlsx`, makeXlsx([{ name: 'Fairness', rows, widths: [24, 12, 10, 10, 13, 15, 17, 20, 10, 16, 12] }]),
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+}
+
 // ---------- Settings ----------
 function viewSettings() {
   const s = state.settings;
@@ -1244,8 +2189,16 @@ function viewSettings() {
   </div>
   <div class="panel">
     <h3 style="margin-top:0">Your data</h3>
-    <p>Everything is stored on this computer only (in this browser) – no internet needed. Export a backup regularly, and use it to move data to another computer.</p>
+    ${desktop ? `<p>Everything is saved automatically to:<br><code>${esc(deskInfo.file)}</code>
+      ${deskInfo.cloud ? `<span class="tag drv">${esc(deskInfo.cloud)} ✓</span>` : ''}</p>
+    <p class="muted">A copy is kept each day in the <b>backups</b> folder next to it (the last ${deskInfo.keep} days).</p>
+    <p><b>Sharing with your office (Google Drive):</b> install <i>Google Drive for desktop</i> on each computer, then press
+      <b>Change data folder…</b> and choose the same shared Drive folder on every computer. Only one computer can make changes at a time –
+      the others see it view only, with who has it open, and update as they save.
+      ${deskInfo.cloud ? '' : 'Right-click the folder in Drive and choose <i>Available offline</i> so it keeps working without internet.'}</p>`
+    : `<p>Everything is stored on this computer only (in this browser) – no internet needed. Export a backup regularly, and use it to move data to another computer.</p>`}
     <div class="toolbar">
+      ${desktop ? '<button class="btn" data-action="openDataFolder">Open data folder</button><button class="btn" data-action="chooseFolder">Change data folder…</button>' : ''}
       <button class="btn primary" data-action="backup">Export backup</button>
       <label class="btn">Import backup <input type="file" id="importFile" accept=".json,application/json" hidden></label>
       <button class="btn" data-action="sample">Load sample data</button>
@@ -1297,16 +2250,41 @@ document.getElementById('app').addEventListener('click', e => {
   switch (a) {
     case 'prevWeek': ui.week = addDays(ui.week, -7); ui.report = null; break;
     case 'nextWeek': ui.week = addDays(ui.week, 7); ui.report = null; break;
+    case 'planWeeks': {
+      const n = Number(document.getElementById('planCount').value) || 4;
+      ui.planCount = n;
+      if (!confirm(`Auto-fill ${n} weeks from ${fmtDate(ui.week)}? Unlocked slots in those weeks are re-planned; finalised weeks are skipped.`)) return;
+      const res = autoFillWeeks(state, ui.week, n);
+      ui.report = `Planned ${res.filter(r => !r.finalised).length} week(s):\n` + res.map(r => `• w/c ${fmtDate(r.week)}: ` +
+        (r.finalised ? 'finalised – left as it is' : r.problems ? `${r.problems} problem(s) to look at` : 'all runs covered')).join('\n') +
+        '\n\nUse ▶ to look through them.';
+      break;
+    }
+    case 'fillGaps': {
+      const r = fillGaps(state, ui.week);
+      const errs = r.issues.list.filter(i => i.level === 'error');
+      ui.report = r.log.join('\n') + (errs.length ? `\n\nStill needs attention (${errs.length}):\n` + errs.slice(0, 30).map(i => '• ' + i.msg).join('\n') : '\n\nAll runs covered.');
+      break;
+    }
     case 'autofill': {
       const r = autoFill(state, ui.week);
       const errs = r.issues.list.filter(i => i.level === 'error');
       ui.report = r.log.join('\n') + (errs.length ? `\n\nStill needs attention (${errs.length}):\n` + errs.slice(0, 30).map(i => '• ' + i.msg).join('\n') + (errs.length > 30 ? '\n…' : '') : '\n\nAll runs covered.');
       break;
     }
-    case 'clearUnlocked': clearUnlocked(state, ui.week); ui.report = null; break;
-    case 'clearAll': if (!confirm('Clear every assignment this week, including locked ones?')) return;
+    case 'finaliseWeek': {
+      const errs = validate(state, ui.week).list.filter(i => i.level === 'error').length;
+      if (errs && !confirm(`This week still has ${errs} problem(s). Finalise it anyway?`)) return;
+      week.final = true; ui.report = null; break;
+    }
+    case 'reopenWeek':
+      if (!confirm('Reopen this week? Auto-fill, clearing and editing will be switched back on.')) return;
+      delete week.final; break;
+    case 'clearUnlocked': if (week.final) return; clearUnlocked(state, ui.week); ui.report = null; break;
+    case 'clearAll': if (week.final || !confirm('Clear every assignment this week, including locked ones?')) return;
       delete state.weeks[ui.week]; ui.report = null; break;
     case 'copyPrev': {
+      if (week.final) return;
       const prev = state.weeks[addDays(ui.week, -7)];
       if (!prev) { alert('There is no schedule for the previous week.'); return; }
       if (!confirm('Replace this week with a copy of last week? Copied slots will be locked.')) return;
@@ -1315,10 +2293,43 @@ document.getElementById('app').addEventListener('click', e => {
       state.weeks[ui.week] = copy; ui.report = 'Copied previous week. Check the highlighted cells for leave/sickness this week.';
       break;
     }
-    case 'lock': { const s = getCell(week, runById(b.dataset.run), Number(b.dataset.day)).slots[Number(b.dataset.slot)]; s.locked = !s.locked; break; }
+    case 'lock': { if (week.final) return; const s = getCell(week, runById(b.dataset.run), Number(b.dataset.day)).slots[Number(b.dataset.slot)]; s.locked = !s.locked; break; }
     case 'shadow': getCell(week, runById(b.dataset.run), Number(b.dataset.day)).shadowOpen = true; break;
+    case 'findCover': {
+      const x = { week: ui.week, runId: b.dataset.run, d: Number(b.dataset.day), idx: Number(b.dataset.slot) };
+      if (!ui.cover.some(y => JSON.stringify(y) === JSON.stringify(x))) ui.cover.push(x);
+      break;
+    }
+    case 'coverPick': {
+      const x = ui.cover[Number(b.dataset.k)];
+      getCell(state.weeks[x.week], runById(x.runId), x.d).slots[x.idx] = { c: b.dataset.c, locked: true, override: false };
+      ui.cover.splice(Number(b.dataset.k), 1);
+      ui.report = null;
+      break;
+    }
+    case 'coverSkip': ui.cover.splice(Number(b.dataset.k), 1); break;
+    case 'sickForm': {
+      const today = todayIso();
+      const from = today >= ui.week && today <= addDays(ui.week, 6) ? today : ui.week;
+      ui.sickForm = { carer: '', from, to: from };
+      break;
+    }
+    case 'sickCancel': ui.sickForm = null; break;
+    case 'sickSave': {
+      const f = document.getElementById('sickForm');
+      const carerId = f.querySelector('[data-f="sickCarer"]').value;
+      const from = f.querySelector('[data-f="sickFrom"]').value;
+      const to = f.querySelector('[data-f="sickTo"]').value || from;
+      if (!carerId || !from) { alert('Choose the carer and the first day they are off sick.'); return; }
+      const emptied = reportSickness(state, carerId, from, to);
+      ui.sickForm = null;
+      ui.cover = ui.cover.concat(emptied);
+      ui.report = `${byId(carerId).name} marked off sick ${fmtDate(from)}${to > from ? ' to ' + fmtDate(to) : ''}: taken off ${emptied.length} shift(s).` +
+        (emptied.length ? ' Choose cover below.' : ' They had no shifts in those dates.');
+      break;
+    }
     case 'csv': exportCsv(); return;
-    case 'print': window.print(); return;
+    case 'print': ui.printWhat = document.getElementById('printWhat').value; render(); window.print(); return;
 
     case 'newCarer': ui.editCarer = blankCarer(); break;
     case 'newAgency': ui.editCarer = blankCarer(true); break;
@@ -1367,11 +2378,49 @@ document.getElementById('app').addEventListener('click', e => {
       break;
     }
 
+    case 'openDataFolder': desktop.openFolder(); return;
+    case 'chooseFolder':
+      desktop.chooseFolder().then(r => {
+        if (!r.changed) return;
+        deskInfo = r.info;
+        reloadFromDisk();
+        alert(`CareSchedule data is now kept in:\n${deskInfo.folder}` + (deskInfo.mode === 'view' ? `\n\n${holderText()} has it open, so this computer is view only for now.` : ''));
+      });
+      return;
+    case 'retryLock':
+      deskInfo = desktop.retryLock();
+      if (deskInfo.mode === 'edit') reloadFromDisk(); else alert(`${holderText()} still has CareSchedule open.`);
+      return;
+    case 'leaveCheck': {
+      const f = readLeaveForm();
+      if (!f.carer || !f.from) { alert('Choose the carer and the first day of leave.'); return; }
+      ui.leaveCheck = leaveImpact(state, f.carer, f.from, f.to, f.type);
+      render(); return;
+    }
+    case 'leaveAdd': {
+      const f = ui.leaveForm, c = byId(f.carer);
+      c.leave = (c.leave || []).concat([{ type: f.type, from: f.from, to: f.to }]);
+      alert(`${f.type === 'SICK' ? 'Sickness' : 'Annual leave'} added for ${c.name}: ${fmtDate(f.from)}${f.to > f.from ? ' to ' + fmtDate(f.to) : ''}.\n\nAny shifts they already have in those dates will show as problems on the Schedule – use Find cover there.`);
+      ui.leaveForm = null; ui.leaveCheck = null;
+      break;
+    }
+    case 'leaveCancel': ui.leaveCheck = null; render(); return;
+    case 'reportExcel': downloadReport(); return;
+    case 'carerTemplate': downloadCarerTemplate(); return;
+    case 'carerExport': downloadCarers(); return;
+    case 'importApply': {
+      const { plan } = ui.importPlan;
+      applyCarerImport(state, plan);
+      alert(`Imported: ${plan.add.length} new carer(s), ${plan.update.length} updated.`);
+      ui.importPlan = null;
+      break;
+    }
+    case 'importCancel': ui.importPlan = null; break;
     case 'backup': download(`careschedule-backup-${todayIso()}.json`, JSON.stringify(state, null, 2), 'application/json'); return;
     case 'sample': if (state.carers.length && !confirm('Replace all current data with sample data?')) return;
-      state = sampleData(); ui.tab = 'schedule'; break;
+      state = sampleData(); dataProblem = null; ui.tab = 'schedule'; break;
     case 'reset': if (!confirm('Delete ALL carers, runs and schedules? Export a backup first if unsure.')) return;
-      state = newState(); break;
+      state = newState(); dataProblem = null; break;
     default: return;
   }
   save(); render();
@@ -1411,6 +2460,18 @@ document.getElementById('app').addEventListener('change', e => {
     state.settings.useOvertime = t.checked;
   } else if (t.id === 'genderPriority') {
     state.settings.genderPriority = t.value;
+  } else if (t.id === 'leaveWeeks') {
+    ui.leaveWeeks = Number(t.value); render(); return;
+  } else if (t.id === 'reportWeeks') {
+    ui.reportWeeks = Number(t.value); render(); return;
+  } else if (t.id === 'importCarers') {
+    const file = t.files[0];
+    if (!file) return;
+    readCarerFile(file).then(rows => {
+      ui.importPlan = { fileName: file.name, plan: planCarerImport(state, rows) };
+      render();
+    }).catch(err => alert('Could not read that file: ' + err.message));
+    return;
   } else if (t.id === 'importFile') {
     const file = t.files[0];
     if (!file) return;
@@ -1420,6 +2481,7 @@ document.getElementById('app').addEventListener('change', e => {
         if (!Array.isArray(data.carers) || !Array.isArray(data.runs)) throw new Error('Not a CareSchedule backup');
         if (!confirm('Replace all current data with this backup?')) return;
         state = withDefaults(data);
+        dataProblem = null;
         save(); render(); alert('Backup imported.');
       } catch (err) { alert('Could not import: ' + err.message); }
     });
@@ -1431,6 +2493,11 @@ document.getElementById('app').addEventListener('change', e => {
 });
 
 render();
+if (desktop && desktop.info().notice) alert(desktop.info().notice);
+if (dataProblem) {
+  alert(`Your saved data could not be read (${dataProblem}).\n\nNothing will be saved until you restore it: go to Settings & Data → Import backup` +
+    (desktop ? ' and choose the latest file in the backups folder (Open data folder).' : '.'));
+}
 </script>
 </body>
 </html>

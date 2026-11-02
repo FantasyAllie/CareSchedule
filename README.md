@@ -1,15 +1,52 @@
 # CareSchedule
 
-An offline weekly scheduler for domiciliary care runs. It works on **Windows and Mac** with **no internet**
-and nothing to install: it is one file, `CareSchedule.html`, that opens in Edge, Chrome, Firefox or Safari.
+An offline weekly scheduler for domiciliary care runs. It works on **Windows and Mac** with **no internet**.
 
-## Getting started
+## Desktop app (recommended)
+
+The desktop app saves everything to a data file on the computer and keeps daily backups, so nothing is lost
+if the browser is cleared.
+
+**Download:** on GitHub, open **Actions → Build desktop app**, click the latest successful run and download
+**CareSchedule-Windows** (installer `.exe`) or **CareSchedule-macOS** (`.dmg`) from *Artifacts*.
+When a version tag such as `v1.0.0` is pushed, the same files are also attached to a **Release**.
+
+- **Windows:** run `CareSchedule-Setup-….exe`. Windows may show "Windows protected your PC" because the app
+  isn't code-signed: click **More info → Run anyway**.
+- **Mac:** open the `.dmg` and drag CareSchedule into Applications. The first time, right-click the app and
+  choose **Open** (it isn't signed by Apple). If macOS says it is "damaged", run
+  `xattr -cr /Applications/CareSchedule.app` in Terminal, then open it again.
+
+**Your data** is saved to `Documents/CareSchedule/careschedule-data.json` after every change. The first
+change each day also copies the previous file into `Documents/CareSchedule/backups/`, keeping the last 30 days.
+**Settings & Data → Open data folder** shows the folder. If the data file is ever damaged, the app restores
+the newest backup automatically and says so.
+
+**Sharing with the office through Google Drive:** install *Google Drive for desktop* on each computer, then in
+CareSchedule go to *Settings & Data → Change data folder…* and pick the same shared Drive folder on every computer
+(right-click the folder in Drive and choose *Available offline* so it keeps working without internet).
+Only one computer can make changes at a time: the others open it **view only**, see who has it open, and update
+automatically when that person saves. When they close CareSchedule, the next computer can edit (straight away with
+*Try again*, or automatically within a minute). A lock left behind by a computer that crashed or lost power is taken
+over after 3 minutes. If Drive ever delivers someone else's copy while you are editing (e.g. two people opened it at
+the same moment before Drive had synced), your version is kept and theirs is saved next to it as
+`careschedule-data.from-another-computer-….json`.
+
+**Moving over from the browser version:** in the browser, *Settings & Data → Export backup*; in the desktop
+app, *Settings & Data → Import backup*.
+
+To build it yourself: `cd desktop && npm ci && npm start` (run) or `npm run dist` (installer for the
+computer you're on).
+
+## Browser version
+
+`CareSchedule.html` also works on its own in Edge, Chrome, Firefox or Safari – nothing to install.
 
 1. Copy `CareSchedule.html` to a fixed place on the computer (e.g. Documents) and double-click it.
 2. Go to **Settings & Data → Load sample data** to try it out, or add your own carers and runs.
 3. On **Schedule**, pick the week and press **Auto-fill week**.
 
-Data is saved automatically in the browser on that computer. Use **Export backup** regularly (and to move
+In the browser, data is saved in that browser on that computer. Use **Export backup** regularly (and to move
 data to another computer), and **Import backup** to restore. Always open the file from the same location
 in the same browser, otherwise the browser treats it as a fresh copy.
 
@@ -32,6 +69,38 @@ in the same browser, otherwise the browser treats it as a fresh copy.
 - **Schedule** – Monday to Sunday grid. Pick carers by hand (the slot is then 🔒 locked and auto-fill
   leaves it alone), add a 3rd shadow / training carer, copy the previous week, print, export CSV.
   Problems are highlighted in red (e.g. no driver, double booked, on leave) and amber (overrides, overtime).
+- **Plan several weeks** – *Auto-fill [2/4/6/8] weeks* plans this week and the following ones in date order
+  (each week uses the ones before it); finalised weeks are skipped.
+- **Leave planner** (Leave page) – book annual leave or sickness and press *Check cover* first: day by day it shows
+  roughly how many carers, drivers and male/female staff would be around against the shifts to cover, and flags any
+  day that would be short. Below it, a calendar of who's off over the next 4, 8 or 13 weeks, with days likely to be
+  short of staff in red.
+- **Trainees** – on a new starter's page set *Trainee – only shadows experienced carers until* a date. Until then
+  auto-fill only puts them in the shadow place, next to an experienced (non-trainee, non-agency) carer, keeping them
+  on the same run where it can; after the date they work normally. (Also a column in the Excel template.)
+- **Fairness report** (Reports page) – for the last 4, 8, 13 or 26 weeks: days worked against days due, days short,
+  overtime, weekends worked, most weekends in a row, sick days, annual leave and shadow days for each carer, with
+  anything out of line in amber. Can be downloaded as Excel.
+- **Finalise week** – once a week is done, **✔ Finalise week** switches off Auto-fill, Fill gaps only,
+  clearing and editing for it, so it can't be changed by accident (the weekend and days-in-a-row rules rely
+  on past weeks being right). Sickness cover still works on a finalised week. **Reopen week** undoes it.
+- **Printing** – choose what to print next to the Print button: the **run rota** (runs × days), a **carer rota**
+  for the wall (carers × days, with their run and who they're working with), or **a sheet for each carer**
+  (one page each, listing their week).
+- **Undo** – the **↶ Undo** button (top right) or Ctrl+Z / ⌘Z steps back through the last 30 changes,
+  including auto-fills and imports.
+- **Import carers from Excel** – on the Carers page, **Download Excel template** gives a sheet with the right
+  columns and a "How to fill in" tab. Fill it in, then **Import from Excel** (Excel .xlsx or CSV). You see what
+  will be added or changed, and any rows that can't be read (with the reason), before anything is imported.
+  A row with an existing carer's name updates that carer; blank cells keep their current values.
+  **Download carers (Excel)** gives your current carers in the same layout, to edit in Excel and import back.
+- **Fill gaps only** – next to Auto-fill week. Fills just the empty slots using the same rules, without
+  moving anyone already on the schedule (Auto-fill week reshuffles every slot that isn't locked).
+- **Sickness cover** – **🤒 Report sickness** on the Schedule marks a carer off sick for the dates given and
+  takes them off every shift in that time. For each emptied shift it lists who can cover it without breaking
+  any rule, best first (regular staff short of their days, then working the day before/after or on their
+  preferred run; overtime and agency last), with a "why others can't" list. Click a name to fill it. Any empty
+  shift also has a **Find cover** link.
 - **Manual overrides** – you can still pick someone on leave, sick or unavailable; you are asked to confirm
   and the cell is flagged as an override.
 
