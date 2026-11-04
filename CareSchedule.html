@@ -2643,6 +2643,9 @@ function viewSettings() {
     ${desktop ? `<p>Everything is saved automatically to:<br><code>${esc(deskInfo.file)}</code>
       ${deskInfo.cloud ? `<span class="tag drv">${esc(deskInfo.cloud)} ✓</span>` : ''}</p>
     <p class="muted">A copy is kept each day in the <b>backups</b> folder next to it (the last ${deskInfo.keep} days).</p>
+    ${deskInfo.portable ? `<p><b>Portable version:</b> the program and its data travel together. To move to another computer, copy
+      <b>CareSchedule-Portable.exe</b> and the <b>CareSchedule Data</b> folder next to it (e.g. onto a USB stick) and run it there –
+      nothing needs installing. Close CareSchedule before unplugging the stick, and keep an Export backup somewhere else too in case the stick is lost.</p>` : ''}
     <p><b>Sharing with your office (Google Drive):</b> install <i>Google Drive for desktop</i> on each computer, then press
       <b>Change data folder…</b> and choose the same shared Drive folder on every computer. Only one computer can make changes at a time –
       the others see it view only, with who has it open, and update as they save.

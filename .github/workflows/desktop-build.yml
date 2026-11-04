@@ -74,7 +74,9 @@ jobs:
           target_commitish: ${{ github.sha }}
           files: out/*
           body: |
-            **Windows:** download `CareSchedule-Setup-….exe` and run it. If Windows says "Windows protected your PC", click **More info → Run anyway** (the app isn't code-signed).
+            **Windows, portable (no install):** download `CareSchedule-Portable-….exe`, put it in a folder or on a USB stick and run it. Its data is kept in a `CareSchedule Data` folder next to it – copy both to move to another computer.
+
+            **Windows, installed:** download `CareSchedule-Setup-….exe` and run it. If Windows says "Windows protected your PC", click **More info → Run anyway** (the app isn't code-signed).
 
             **Mac:** download `CareSchedule-…-mac.dmg`, open it and drag CareSchedule into Applications. The first time, right-click the app and choose **Open**. If macOS says it is "damaged", run `xattr -cr /Applications/CareSchedule.app` in Terminal, then open it again.
 

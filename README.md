@@ -11,6 +11,11 @@ if the browser is cleared.
 **CareSchedule-Windows** (installer `.exe`) or **CareSchedule-macOS** (`.dmg`) from *Artifacts*.
 When a version tag such as `v1.0.0` is pushed, the same files are also attached to a **Release**.
 
+- **Windows (portable – nothing to install):** `CareSchedule-Portable-….exe`. Put it in any folder or on a USB stick
+  and double-click it. Its data, backups and settings are kept in a **CareSchedule Data** folder next to the `.exe`, so
+  to move to another computer just copy the `.exe` and that folder together. (It takes a few seconds longer to start
+  than the installed version.) Close CareSchedule before unplugging a USB stick, and keep an *Export backup* elsewhere
+  in case the stick is lost.
 - **Windows:** run `CareSchedule-Setup-….exe`. Windows may show "Windows protected your PC" because the app
   isn't code-signed: click **More info → Run anyway**.
 - **Mac:** open the `.dmg` and drag CareSchedule into Applications. The first time, right-click the app and
