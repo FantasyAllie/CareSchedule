@@ -1,6 +1,7 @@
 # CareSchedule
 
-An offline weekly scheduler for domiciliary care runs. It works on **Windows and Mac** with **no internet**.
+An offline weekly scheduler for domiciliary care runs. It works on **Windows and Mac** with **no internet**, and optionally
+shares one rota across the office computers and **iPhone and Android** work phones (see *Shared storage* and *Phone apps*).
 
 ## Desktop app (recommended)
 
@@ -54,6 +55,96 @@ computer you're on).
 In the browser, data is saved in that browser on that computer. Use **Export backup** regularly (and to move
 data to another computer), and **Import backup** to restore. Always open the file from the same location
 in the same browser, otherwise the browser treats it as a fresh copy.
+
+## Shared storage – one rota on every device
+
+Instead of the data living on one computer (or in Google Drive), it can be kept in **Supabase** (a hosted database), so
+the office computers, browsers and work phones all share **one rota**. Whoever makes a change, everyone sees it within a
+few seconds.
+
+- **One editor at a time.** The first person to make a change becomes the editor. Everyone else sees *View only – Sarah
+  is editing on iPhone* and can press **Ask to edit**: Sarah is asked to hand over, and if she agrees (or has made no
+  change for 10 minutes, or her device has gone quiet for 2 minutes) the asker takes over. **Done editing** hands it back.
+- **No connection:** the last copy downloaded stays on the device and can be viewed, but can't be changed until it's
+  back online.
+- **Who can get in:** only people you add to the staff list, each signing in with their own email and password.
+  Supabase keeps a copy of the rota each day for 30 days.
+
+### Setting it up (once, about 15 minutes)
+
+1. Create a free account at [supabase.com](https://supabase.com) and a **new project**. Choose the **London (eu-west-2)**
+   region so the data stays in the UK, and keep the database password somewhere safe.
+2. In the project, open **SQL Editor → New query**, paste in the whole of [`supabase/setup.sql`](supabase/setup.sql) and
+   press **Run**.
+3. Add your office staff to the staff list – in the SQL Editor run one line per person:
+   ```sql
+   insert into public.cs_staff (email, name) values ('sarah@yourcompany.co.uk', 'Sarah');
+   ```
+   (To remove someone: `delete from public.cs_staff where email = 'sarah@yourcompany.co.uk';`)
+4. Give each of them a sign-in: **Authentication → Users → Add user → Create new user**, with their email, a password,
+   and *Auto Confirm User* ticked. Then in **Authentication → Sign In / Providers**, turn **off** *Allow new users to
+   sign up*, so nobody else can create an account.
+5. Note the **Project URL** (*Project Settings → Data API*) and the **publishable key** (*Project Settings → API Keys*;
+   older projects call it the *anon public* key). These are safe to put in the apps – the staff list and the rules in
+   `setup.sql` are what keep the data private.
+
+### Connecting each device
+
+- **Desktop app or browser:** *Settings & Data → Shared storage*, enter the Project URL and key, press **Connect** and
+  sign in. On the **first** device, if the shared storage is empty, press **Upload this device's data** to start it off
+  with your existing carers, runs and history (or *Load sample data* to try it out).
+- **Phone apps:** put the URL and key in `apps/config.json` before building (below), and staff only have to sign in. If
+  you leave it blank, they enter it once under *Settings & Data* like the desktop.
+
+Carers' names, availability and sickness are personal data, so keep the staff list to people who need it, use strong
+passwords, and add Supabase to your GDPR records as a data processor (their Data Processing Agreement is in the
+dashboard under *Organization → Legal Documents*).
+
+## Phone apps (iPhone and Android)
+
+`apps/ios` (Xcode) and `apps/android` (Android Studio) are small native apps that show the same `CareSchedule.html`
+full screen, so every rule and feature is the same as on the desktop – there's only one copy of the app to keep up to
+date. On a phone the schedule shows **one day at a time** as cards: tap a day or **swipe** left and right, and
+**More** opens the other schedule tools. The native side adds the phone's **share sheet** for files and PDFs (WhatsApp,
+email, Save to Files / Drive), **printing**, and pop-up messages. They use the shared storage above, so set that up first.
+
+Nothing is published to the App Store or Google Play.
+
+**Before building:** fill in `apps/config.json` with your Project URL and publishable key (optional, see above).
+
+### iPhone (Xcode, on a Mac)
+
+1. Open `apps/ios/CareSchedule.xcodeproj` in Xcode (16 or later).
+2. Click the **CareSchedule** project → target **CareSchedule** → **Signing & Capabilities**: choose your **Team** and
+   change the **Bundle Identifier** (`uk.careschedule.rota`) to one of your own, e.g. `uk.co.yourcompany.careschedule`.
+3. To put it on a phone that's plugged in: choose the phone at the top and press **Run** (▶). The phone needs
+   *Developer Mode* turned on (Settings → Privacy & Security), and the first time *Settings → General → VPN & Device
+   Management → trust your developer account*.
+4. For the office's phones without plugging each one in, use **TestFlight internal testing**: *Product → Archive →
+   Distribute App → TestFlight Internal Only*. In App Store Connect add staff as internal testers (they need to be
+   users on your developer account); they install the **TestFlight** app and get the CareSchedule from there. Internal
+   builds are never reviewed or shown on the App Store. Each build lasts 90 days, so upload a new one before then.
+   (If your account is an *Apple Developer Enterprise* account, you can instead export an in-house `.ipa` and share it
+   through your device management.)
+
+### Android (Android Studio)
+
+1. Open the `apps/android` folder in Android Studio and let it sync.
+2. To try it: plug in a phone with *USB debugging* on (or start an emulator) and press **Run** (▶).
+3. To install on the office phones: *Build → Generate Signed App Bundle or APK → APK*, create a key the first time
+   (keep the `.jks` file and its passwords safe – every later update must be signed with the same key), and send the
+   `.apk` to the phones (email, Drive or your device management). On the phone, allow *Install unknown apps* for the app
+   you open it from. If you use **Google Play managed private apps** through your device management, the same app can be
+   pushed that way without appearing in the public Play Store.
+
+### Builds on GitHub
+
+**Actions → Build phone apps** builds both apps after every change, so you know they still compile, and checks the
+shared-storage rules. The Android `.apk` is under the run's *Artifacts* (**CareSchedule-android**). To have GitHub sign
+it with your own key (so updates install over the top), add these repository secrets under *Settings → Secrets and
+variables → Actions*: `CS_KEYSTORE_B64` (the `.jks` file as base64: `base64 -i office.jks | pbcopy` on a Mac),
+`CS_KEYSTORE_PASSWORD`, `CS_KEY_ALIAS` and `CS_KEY_PASSWORD`. The iPhone build there is for the simulator only;
+installing on iPhones is always done from Xcode with your developer account.
 
 ## Features
 
@@ -197,5 +288,6 @@ and a random shuffle (see `WEIGHTS` in the engine).
 ## Tests
 
 ```
-node tests/engine.test.js
+node tests/engine.test.js          # the auto-fill rules
+cd supabase/test && npm ci && npm test   # the shared-storage rules (runs setup.sql in a test database)
 ```

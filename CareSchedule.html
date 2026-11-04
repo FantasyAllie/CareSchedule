@@ -2560,7 +2560,27 @@ function exportCsv() {
   download(`schedule-${ui.week}.csv`, lines.join('\r\n'), 'text/csv');
 }
 
+// Inside the iPhone / Android app: files go to the phone's share sheet, printing to its print system.
+function nativeApp() {
+  const wk = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.care;
+  if (wk) return { post: m => wk.postMessage(m) };
+  if (window.careNative && window.careNative.post) return { post: m => window.careNative.post(JSON.stringify(m)) };
+  return null;
+}
+function toBase64(data) {
+  const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+// what: 'pdf' makes a PDF file to send on, 'print' opens the printer choice
+function nativePrint(what, name, landscape) {
+  nativeApp().post({ kind: what, name, landscape: !!landscape });
+}
+
 function download(filename, text, type) {
+  const app = nativeApp();
+  if (app) { app.post({ kind: 'file', name: filename, type: type || 'application/octet-stream', base64: toBase64(text) }); return; }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([text], { type }));
   a.download = filename;
@@ -3092,9 +3112,9 @@ function viewSettings() {
       <p class="muted">Every device signed in here shares one rota. One person edits at a time; everyone else sees changes within a few seconds.
         A copy is kept on this device so it can still be viewed without a connection. Daily copies are kept in Supabase for 30 days.</p>`
     : `<p>Keep the rota in <b>Supabase</b> so every device (office computers, phones, tablets) shares it. Set up the project with
-        <code>supabase/setup.sql</code> (see the README), then enter its details from <i>Project Settings → API</i>:</p>
+        <code>supabase/setup.sql</code> (see the README), then enter its details from <i>Project Settings → API Keys</i> (the URL is under <i>Data API</i>):</p>
       <div class="row"><label>Project URL <input id="cloudUrl" size="40" placeholder="https://xxxx.supabase.co"></label></div>
-      <div class="row"><label>anon public key <input id="cloudKey" size="40" placeholder="eyJ…"></label></div>
+      <div class="row"><label>Publishable key <input id="cloudKey" size="40" placeholder="sb_publishable_… (or the anon key, eyJ…)"></label></div>
       <button class="btn primary" data-action="cloudConnect">Connect</button>
       <p class="muted">After connecting you sign in. If the shared storage is empty you can upload this device's data to start it off.</p>`}
   </div>
@@ -3273,7 +3293,9 @@ document.getElementById('app').addEventListener('click', e => {
       setPageSize(/^(runs|carers|pdf-team)$/.test(what));
       if (/^pdf-/.test(what)) {
         const name = `Rota ${{ 'pdf-team': 'team', 'pdf-sheets': 'carers', 'pdf-update': 'update' }[what]} w-c ${ui.week}`;
-        if (desktop && desktop.savePdf) {
+        if (nativeApp()) {
+          nativePrint('pdf', name, what === 'pdf-team');
+        } else if (desktop && desktop.savePdf) {
           desktop.savePdf({ name: name + '.pdf', landscape: what === 'pdf-team' })
             .then(r => { if (r.saved) alert(`PDF saved:\n${r.file}\n\nReady to send to carers by email or WhatsApp.`); })
             .catch(err => alert('Could not save the PDF: ' + err.message));
@@ -3284,6 +3306,8 @@ document.getElementById('app').addEventListener('click', e => {
           window.print();
           document.title = title;
         }
+      } else if (nativeApp()) {
+        nativePrint('print', 'CareSchedule ' + what, /^(runs|carers)$/.test(what));
       } else {
         window.print();
       }
@@ -3371,7 +3395,7 @@ document.getElementById('app').addEventListener('click', e => {
       save(); render(); return;
     case 'cloudConnect': {
       const url = document.getElementById('cloudUrl').value.trim(), key = document.getElementById('cloudKey').value.trim();
-      if (!/^https:\/\/.+/.test(url) || key.length < 20) { alert('Enter the Project URL (starts https://) and the anon public key from Supabase → Project Settings → API.'); return; }
+      if (!/^https:\/\/.+/.test(url) || key.length < 20) { alert('Enter the Project URL (starts https://) and the publishable key (or the older anon key) from Supabase → Project Settings → API Keys.'); return; }
       cloud.cfg = { url, key }; writeLS(CLOUD_CFG_KEY, cloud.cfg);
       cloud.mode = 'signedout'; render();
       startCloud();

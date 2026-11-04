@@ -1,0 +1,77 @@
+name: Build phone apps
+
+# Builds the Android app and the iPhone app on GitHub's machines, to prove both still compile after a
+# change, and checks the shared-storage (Supabase) rules.
+# - Android: the installable .apk is under the run's "Artifacts" section (CareSchedule-android).
+#   It is signed with your own key if the four CS_* secrets are set (Settings → Secrets → Actions),
+#   so updates install over the top; otherwise it is a debug build.
+# - iPhone: built for the simulator only. Installing on phones is done from Xcode on a Mac, with your
+#   developer account (see README → Phone apps).
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['CareSchedule.html', 'apps/**', 'supabase/**', '.github/workflows/phone-apps.yml']
+  push:
+    branches: [main]
+    paths: ['CareSchedule.html', 'apps/**', 'supabase/**', '.github/workflows/phone-apps.yml']
+
+jobs:
+  shared-storage:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: supabase/test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Check the Supabase rules (who can see, edit and save)
+        run: npm test
+
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/android
+    env:
+      CS_KEYSTORE_B64: ${{ secrets.CS_KEYSTORE_B64 }}
+      CS_KEYSTORE_PASSWORD: ${{ secrets.CS_KEYSTORE_PASSWORD }}
+      CS_KEY_ALIAS: ${{ secrets.CS_KEY_ALIAS }}
+      CS_KEY_PASSWORD: ${{ secrets.CS_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build (debug)
+        run: ./gradlew --no-daemon assembleDebug
+      - name: Build (signed with your key)
+        if: env.CS_KEYSTORE_B64 != ''
+        run: |
+          echo "$CS_KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/office.jks"
+          CS_KEYSTORE="$RUNNER_TEMP/office.jks" ./gradlew --no-daemon assembleRelease
+      - name: Name the files
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/debug/app-debug.apk out/CareSchedule-debug.apk
+          if [ -f app/build/outputs/apk/release/app-release.apk ]; then cp app/build/outputs/apk/release/app-release.apk out/CareSchedule.apk; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CareSchedule-android
+          path: apps/android/out/*.apk
+          if-no-files-found: error
+
+  ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build for the iPhone simulator
+        run: |
+          xcodebuild -version
+          xcodebuild -project apps/ios/CareSchedule.xcodeproj -scheme CareSchedule -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build
