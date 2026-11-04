@@ -110,6 +110,53 @@
   .under { color: var(--warn); font-weight: 600; } .over { color: var(--err); font-weight: 600; } .met { color: #1b7f3b; font-weight: 600; }
   .legend { font-size: 12px; color: var(--muted); }
   #print-area { display: none; }
+
+  /* ---------- phones ---------- */
+  .phonebar { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+  .phonebar input { flex: 1; }
+  .daychips { display: flex; gap: 4px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 8px; }
+  .daychips .chip { flex: 1; min-width: 44px; padding: 6px 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: 13px; font-weight: 600; cursor: pointer; }
+  .daychips .chip span { display: block; font-weight: 400; font-size: 11px; color: var(--muted); }
+  .daychips .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .daychips .chip.on span { color: #dbeafe; }
+  .daychips .chip.err:not(.on) { border-color: var(--err); box-shadow: inset 0 -3px 0 var(--err); }
+  .phoneactions { display: flex; gap: 6px; margin-bottom: 8px; }
+  .phoneactions > .btn { flex: 1; }
+  .phonefind input { width: 100%; margin-bottom: 6px; }
+  .menurow { display: flex; gap: 6px; align-items: center; padding: 4px 8px; }
+  .menurow button { flex: 1; }
+  .dayhead { margin: 10px 0 6px; font-size: 16px; }
+  .runcards { display: flex; flex-direction: column; gap: 8px; }
+  .runcard { border: 1px solid var(--line); border-radius: 10px; padding: 8px; background: var(--panel); }
+  .runcard.err { background: var(--err-bg); border-color: #f3b4b4; }
+  .runcard.warn { background: var(--warn-bg); }
+  .runcard .rchead { margin-bottom: 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  .runcard .slot select { font-size: 16px; padding: 6px 4px; }
+  .runcard .lockbtn { font-size: 18px; padding: 4px 6px; }
+  .runcard .split input.t { font-size: 15px; padding: 3px; }
+  .runcard .issues { font-size: 13px; }
+  @media (max-width: 760px) {
+    header { flex-wrap: wrap; gap: 6px; padding: 8px 10px; }
+    header h1 { font-size: 16px; }
+    nav#tabs { order: 3; width: 100%; display: flex; overflow-x: auto; }
+    nav#tabs button { white-space: nowrap; padding: 8px 10px; }
+    main { padding: 8px; }
+    .panel { padding: 10px; border-radius: 10px; }
+    input, select, textarea { font-size: 16px; }   /* stops iPhones zooming in on tap */
+    .btn { padding: 8px 12px; font-size: 14px; }
+    .panel table:not(.grid) { display: block; overflow-x: auto; }
+    .row { gap: 8px; }
+    .row label { flex-wrap: wrap; }
+    .row label { max-width: 100%; min-width: 0; }
+    input[size] { max-width: calc(100vw - 60px); box-sizing: border-box; }
+    .toolbar { gap: 6px; }
+    .sharemenu { position: fixed; left: 8px; right: 8px; bottom: 8px; top: auto; max-height: 70vh; overflow-y: auto; min-width: 0; z-index: 50; box-shadow: 0 -4px 30px rgba(0,0,0,.25); }
+    .sharemenu button { padding: 12px 10px; font-size: 15px; }
+    details.share[open] > summary::before { content: ""; position: fixed; inset: 0; background: rgba(0,0,0,.3); z-index: 40; cursor: default; }
+    .viewonly, .cloudbar, .changedbar, .finalbar { font-size: 13px; }
+    .legend { margin-bottom: 4px; }
+    .panel.signin { margin: 16px auto; }
+  }
   @media print {
     body > header, main > *:not(#print-area) { display: none !important; }
     #print-area { display: block; }
@@ -1611,6 +1658,23 @@ document.getElementById('app').addEventListener('submit', e => {
   e.preventDefault();
   cloudSignIn(document.getElementById('siEmail').value.trim(), document.getElementById('siPassword').value);
 });
+// phones: swipe left / right on the day's runs to move between days (and into the next / previous week)
+let touchStart = null;
+document.getElementById('app').addEventListener('touchstart', e => {
+  touchStart = e.target.closest('#runcards') && e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+}, { passive: true });
+document.getElementById('app').addEventListener('touchend', e => {
+  if (!touchStart || !isPhone()) return;
+  const dx = e.changedTouches[0].clientX - touchStart.x, dy = e.changedTouches[0].clientY - touchStart.y;
+  touchStart = null;
+  if (Math.abs(dx) < 70 || Math.abs(dy) > 50) return;
+  let d = (ui.day || 0) + (dx < 0 ? 1 : -1);
+  if (d > 6) { d = 0; ui.week = addDays(ui.week, 7); }
+  if (d < 0) { d = 6; ui.week = addDays(ui.week, -7); }
+  ui.day = d;
+  render();
+}, { passive: true });
+
 // close the Share menu when clicking anywhere else
 document.addEventListener('click', e => {
   for (const d of document.querySelectorAll('details.share[open]')) if (!d.contains(e.target)) d.removeAttribute('open');
@@ -1911,9 +1975,8 @@ function viewSchedule() {
   const off = final ? 'disabled title="This week is finalised – reopen it to change it"' : '';
   const v = validate(state, ui.week);
   const head = DAYS.map((d, i) => `<th>${d}<br><span class="muted">${fmtDate(addDays(ui.week, i)).slice(0, 5)}</span></th>`).join('');
-  const rows = state.runs.map(run => {
-    const tds = DAYS.map((_, d) => {
-      if (!run.days[d]) return `<td class="cell off">Not running</td>`;
+  // one run on one day: used by the week grid and by the phone's day cards
+  const cellView = (run, d) => {
       const cell = getCell(week, run, d);
       const iss = v.cells[run.id + '|' + d] || [];
       const cls = iss.some(i => i.level === 'error') ? 'err' : iss.length ? 'warn' : '';
@@ -1934,10 +1997,17 @@ function viewSchedule() {
         ? `<div class="slot shadow ${ui.find && cell.shadow.c === ui.find ? 'found' : ''}">${carerSelect(run, d, cell.shadow.c, `data-slot="shadow" ${off}`, 'Shadow / training')}</div>`
         : final ? '' : `<button class="linkbtn" data-action="shadow" data-run="${run.id}" data-day="${d}">+ Shadow Carer</button>`;
       const issues = iss.map(i => `<div class="${i.level === 'error' ? 'e' : 'w'}">${esc(i.msg)}</div>`).join('');
-      const findCover = cell.slots.map((sl, i) => sl.c ? '' : `<button class="linkbtn cover" data-action="findCover" data-run="${run.id}" data-day="${d}" data-slot="${i}">Find cover</button>`).find(Boolean) || '';
-      return `<td class="cell ${cls}">${slots}${findCover}${shadow}<div class="issues">${issues}</div></td>`;
+      const findCover = cell.slots.map((sl, i) => sl.c || sl.parts ? '' : `<button class="linkbtn cover" data-action="findCover" data-run="${run.id}" data-day="${d}" data-slot="${i}">Find cover</button>`).find(Boolean) || '';
+      return { cls, html: `${slots}${findCover}${shadow}<div class="issues">${issues}</div>` };
+  };
+  const runTags = run => `<span class="tag">${run.type === 'double' ? 'Double up' : 'Single'}</span><span class="tag">${run.gender === 'any' ? 'M/F' : run.gender === 'M' ? 'Male' : 'Female'}</span>${isSpecific(run) ? `<span class="tag" title="${esc(run.allowed.map(id => (byId(id) || {}).name).join(', '))}">${run.allowed.length} named carers</span>` : ''}${needsDriver(run) ? '' : '<span class="tag nodrv">No driver needed</span>'}`;
+  const rows = state.runs.map(run => {
+    const tds = DAYS.map((_, d) => {
+      if (!run.days[d]) return `<td class="cell off">Not running</td>`;
+      const cv = cellView(run, d);
+      return `<td class="cell ${cv.cls}">${cv.html}</td>`;
     }).join('');
-    return `<tr><th>${esc(run.name)}<br><span class="tag">${run.type === 'double' ? 'Double up' : 'Single'}</span><span class="tag">${run.gender === 'any' ? 'M/F' : run.gender === 'M' ? 'Male' : 'Female'}</span>${isSpecific(run) ? `<span class="tag" title="${esc(run.allowed.map(id => (byId(id) || {}).name).join(', '))}">${run.allowed.length} named carers</span>` : ''}${needsDriver(run) ? '' : '<span class="tag nodrv">No driver needed</span>'}</th>${tds}</tr>`;
+    return `<tr><th>${esc(run.name)}<br>${runTags(run)}</th>${tds}</tr>`;
   }).join('');
 
   const summaryRow = c => {
@@ -1971,6 +2041,80 @@ function viewSchedule() {
 
   const errs = v.list.filter(i => i.level === 'error').length;
   const warns = v.list.length - errs;
+  const shareItems = `
+          <div class="smhead">For carers (PDF)</div>
+          <button data-action="share" data-what="pdf-team">📄 Team rota</button>
+          <button data-action="share" data-what="pdf-sheets">📄 One page per carer</button>
+          ${(changesSinceShared(state, ui.week) || []).length ? '<button data-action="share" data-what="pdf-update">📄 Update for carers whose shifts changed</button>' : ''}
+          <div class="smhead">Print</div>
+          <button data-action="share" data-what="runs">🖨 Run rota</button>
+          <button data-action="share" data-what="carers">🖨 Carer rota (for the wall)</button>
+          <button data-action="share" data-what="sheets">🖨 A sheet for each carer</button>
+          <div class="smhead">Spreadsheet</div>
+          <button data-action="share" data-what="csv">⬇ Export CSV</button>`;
+  const notices = `
+    ${final ? `<div class="finalbar">✔ <b>This week is finalised.</b> Auto-fill, Fill gaps only, clearing and editing are switched off so it can't be changed by accident.
+      Sickness cover (Report sickness / Find cover) still works. Use <b>Reopen week</b> to make other changes.</div>` : ''}
+    ${changesBanner()}
+    ${ui.carerView ? carerViewPanel() : ''}
+    ${ui.swapForm ? swapFormView() : ''}
+    ${ui.sickForm ? sickFormView() : ''}
+    ${coverPanel()}
+    ${ui.report ? `<div class="report panel" style="margin-top:8px">${esc(ui.report)}</div>` : ''}`;
+  const summaryPanel = `
+  <div class="panel">
+    <h3 style="margin-top:0">Carer summary – days booked / contracted</h3>
+    <div class="grid-wrap"><table><thead><tr><th>Carer</th><th>Days</th>${DAYS.map(d => `<th>${d}</th>`).join('')}<th>Previous ${HISTORY_WEEKS} weeks</th></tr></thead><tbody>${summary}</tbody></table></div>
+  </div>
+  <div id="print-area">${printView(ui.printWhat)}</div>`;
+  const findBox = `<input id="findCarer" list="carerNames" placeholder="🔍 Find carer" value="${esc(ui.find ? (byId(ui.find) || {}).name || '' : '')}" size="14">
+      <datalist id="carerNames">${sortedCarers().filter(c => c.active !== false).map(c => `<option value="${esc(c.name)}">`).join('')}</datalist>`;
+
+  if (isPhone()) {
+    // phones: one day at a time, a card per run, everything else under More
+    const day = ui.day != null ? ui.day : (todayIso() >= ui.week && todayIso() <= addDays(ui.week, 6) ? DAYS.findIndex((_, i) => addDays(ui.week, i) === todayIso()) : 0);
+    ui.day = day;
+    const dayErr = d => state.runs.some(r => r.days[d] && (v.cells[r.id + '|' + d] || []).some(i => i.level === 'error'));
+    const cards = state.runs.filter(r => r.days[day]).map(run => {
+      const cv = cellView(run, day);
+      return `<div class="runcard ${cv.cls}"><div class="rchead"><b>${esc(run.name)}</b> ${runTags(run)}</div>${cv.html}</div>`;
+    }).join('');
+    const notRunning = state.runs.filter(r => !r.days[day]).map(r => esc(r.name));
+    return `
+  <div class="panel phone">
+    <div class="phonebar">
+      <button class="btn" data-action="prevWeek" aria-label="Previous week">◀</button>
+      <input type="date" id="weekPick" value="${ui.week}" aria-label="Week commencing">
+      <button class="btn" data-action="nextWeek" aria-label="Next week">▶</button>
+    </div>
+    <div class="daychips">${DAYS.map((d, i) => `<button class="chip ${i === day ? 'on' : ''} ${dayErr(i) ? 'err' : ''}" data-action="pickDay" data-day="${i}">${d}<span>${fmtDate(addDays(ui.week, i)).slice(0, 5)}</span></button>`).join('')}</div>
+    <div class="phoneactions">
+      <button class="btn primary" data-action="autofill" ${off}>Auto-fill week</button>
+      <details class="share more"><summary class="btn">More ▾</summary>
+        <div class="sharemenu">
+          <div class="smhead">This week</div>
+          <button data-action="fillGaps" ${off}>Fill gaps only</button>
+          <button data-action="sickForm">🤒 Report sickness</button>
+          <button data-action="swapForm">⇄ Swap shifts</button>
+          <div class="menurow"><button data-action="planWeeks">Auto-fill</button><select id="planCount">${[2, 4, 6, 8].map(n => `<option value="${n}" ${ui.planCount === n ? 'selected' : ''}>${n} weeks</option>`).join('')}</select></div>
+          <button data-action="copyPrev" ${off}>Copy previous week</button>
+          <button data-action="clearUnlocked" ${off}>Clear unlocked</button>
+          <button data-action="clearAll" ${off}>Clear all</button>
+          <button data-action="${final ? 'reopenWeek' : 'finaliseWeek'}">${final ? 'Reopen week' : '✔ Finalise week'}</button>
+          ${shareItems}
+        </div>
+      </details>
+    </div>
+    <div class="phonefind">${findBox}</div>
+    <div class="legend">${errs ? `<b class="over">${errs} problem(s)</b>` : '<b class="met">No problems</b>'}${warns ? `, <b class="under">${warns} warning(s)</b>` : ''} this week · swipe for other days</div>
+    ${notices}
+    <h3 class="dayhead">${esc(longDate(addDays(ui.week, day), { weekday: 'long', day: 'numeric', month: 'long' }))}</h3>
+    <div class="runcards" id="runcards">${cards || '<p class="muted">No runs operate on this day.</p>'}</div>
+    ${notRunning.length ? `<p class="muted">Not running today: ${notRunning.join(', ')}</p>` : ''}
+  </div>
+  ${summaryPanel}`;
+  }
+
   return `
   <div class="panel">
     <div class="toolbar">
@@ -1985,47 +2129,30 @@ function viewSchedule() {
       <button class="btn" data-action="fillGaps" ${off || 'title="Only fill empty slots – nobody already on the schedule is moved"'}>Fill gaps only</button>
       <button class="btn" data-action="sickForm">🤒 Report sickness</button>
       <button class="btn" data-action="swapForm" title="Swap shifts between two carers, or give a shift to someone else">⇄ Swap</button>
-      <input id="findCarer" list="carerNames" placeholder="🔍 Find carer" value="${esc(ui.find ? (byId(ui.find) || {}).name || '' : '')}" size="14">
-      <datalist id="carerNames">${sortedCarers().filter(c => c.active !== false).map(c => `<option value="${esc(c.name)}">`).join('')}</datalist>
+      ${findBox}
       <button class="btn" data-action="clearUnlocked" ${off}>Clear unlocked</button>
       <button class="btn danger" data-action="clearAll" ${off}>Clear all</button>
       <button class="btn" data-action="copyPrev" ${off}>Copy previous week</button>
       <button class="btn ${final ? '' : 'final'}" data-action="${final ? 'reopenWeek' : 'finaliseWeek'}">${final ? 'Reopen week' : '✔ Finalise week'}</button>
       <details class="share"><summary class="btn primary">Share ▾</summary>
-        <div class="sharemenu">
-          <div class="smhead">For carers (PDF)</div>
-          <button data-action="share" data-what="pdf-team">📄 Team rota</button>
-          <button data-action="share" data-what="pdf-sheets">📄 One page per carer</button>
-          ${(changesSinceShared(state, ui.week) || []).length ? '<button data-action="share" data-what="pdf-update">📄 Update for carers whose shifts changed</button>' : ''}
-          <div class="smhead">Print</div>
-          <button data-action="share" data-what="runs">🖨 Run rota</button>
-          <button data-action="share" data-what="carers">🖨 Carer rota (for the wall)</button>
-          <button data-action="share" data-what="sheets">🖨 A sheet for each carer</button>
-          <div class="smhead">Spreadsheet</div>
-          <button data-action="share" data-what="csv">⬇ Export CSV</button>
+        <div class="sharemenu">${shareItems}
         </div>
       </details>
     </div>
-    ${final ? `<div class="finalbar">✔ <b>This week is finalised.</b> Auto-fill, Fill gaps only, clearing and editing are switched off so it can't be changed by accident.
-      Sickness cover (Report sickness / Find cover) still works. Use <b>Reopen week</b> to make other changes.</div>` : ''}
     <div class="legend">Choosing a carer by hand locks the slot (🔒) so auto-fill won't change it. Click the lock to unlock.
       <b>Fill gaps only</b> fills empty slots without moving anyone.
       Auto-fill is shuffled each time, so press it again for a different version.
       ${errs ? `<b class="over">${errs} problem(s)</b>` : '<b class="met">No problems</b>'}${warns ? `, <b class="under">${warns} warning(s)</b>` : ''}</div>
-    ${changesBanner()}
-    ${ui.carerView ? carerViewPanel() : ''}
-    ${ui.swapForm ? swapFormView() : ''}
-    ${ui.sickForm ? sickFormView() : ''}
-    ${coverPanel()}
-    ${ui.report ? `<div class="report panel" style="margin-top:8px">${esc(ui.report)}</div>` : ''}
+    ${notices}
     <div class="grid-wrap"><table class="grid"><colgroup><col class="runcol">${DAYS.map(() => '<col>').join('')}</colgroup><thead><tr><th>Run</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>
   </div>
-  <div class="panel">
-    <h3 style="margin-top:0">Carer summary – days booked / contracted</h3>
-    <div class="grid-wrap"><table><thead><tr><th>Carer</th><th>Days</th>${DAYS.map(d => `<th>${d}</th>`).join('')}<th>Previous ${HISTORY_WEEKS} weeks</th></tr></thead><tbody>${summary}</tbody></table></div>
-  </div>
-  <div id="print-area">${printView(ui.printWhat)}</div>`;
+  ${summaryPanel}`;
 }
+
+// Phones (narrow screens) get the one-day layout; tablets and computers keep the week grid.
+const phoneQuery = window.matchMedia('(max-width: 760px)');
+const isPhone = () => phoneQuery.matches;
+phoneQuery.addEventListener && phoneQuery.addEventListener('change', () => render());
 
 // Shown when the week has changed since it was last shared with carers.
 function changesBanner() {
@@ -3230,6 +3357,7 @@ document.getElementById('app').addEventListener('click', e => {
       break;
     }
 
+    case 'pickDay': ui.day = Number(b.dataset.day); render(); return;
     case 'cloudDone': cloudDoneEditing(); return;
     case 'cloudAsk': cloudAskToEdit(); return;
     case 'cloudStart': cloudStartEditing(); return;
