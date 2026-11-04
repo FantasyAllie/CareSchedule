@@ -1,0 +1,7 @@
+{
+  "name": "careschedule-supabase-tests",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node setup.test.mjs ../setup.sql" },
+  "devDependencies": { "@electric-sql/pglite": "0.5.15" }
+}

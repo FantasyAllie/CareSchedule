@@ -59,6 +59,10 @@
   .sharemenu .smhead { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); padding: 6px 8px 2px; }
   .sharemenu button { display: block; width: 100%; text-align: left; background: none; border: none; padding: 7px 8px; border-radius: 5px; cursor: pointer; font-size: 13px; color: var(--text); }
   .sharemenu button:hover { background: #eef2ff; }
+  .cloudbar { margin-bottom: 12px; padding: 8px 12px; border-radius: 8px; background: var(--ok-bg); border: 1px solid #86efac; font-size: 13px; }
+  .cloudbar.offline { background: #f1f5f9; border-color: #94a3b8; }
+  .cloudbar .savestate { margin: 0 8px; color: var(--muted); }
+  .panel.signin { max-width: 460px; margin: 40px auto; }
   .viewonly { margin-bottom: 12px; padding: 10px 12px; border-radius: 8px; background: #eef2ff; border: 1px solid #a5b4fc; }
   table.leavecal { font-size: 11px; }
   table.leavecal th, table.leavecal td { padding: 2px 3px; text-align: center; min-width: 20px; }
@@ -1458,12 +1462,56 @@ const STORE_KEY = 'careschedule.v1';
 const desktop = window.careDesktop || null;
 let dataProblem = null; // set when saved data couldn't be read, so we don't overwrite it
 
+// ---------- Shared storage (Supabase) ----------
+// When set up, the rota lives in Supabase (see supabase/setup.sql) so every device – desktop, browser, phones – sees
+// the same data. One person edits at a time (the server enforces it); everyone else follows along view only, updated
+// every few seconds. Without a connection the last copy is shown, view only.
+const CLOUD_CFG_KEY = 'careschedule.cloud', CLOUD_SESSION_KEY = 'careschedule.session', CLOUD_CACHE_KEY = 'careschedule.cloudcache';
+const POLL_MS = 4000, IDLE_RELEASE_MS = 10 * 60 * 1000;
+const readLS = k => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (_) { return null; } };
+const writeLS = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, JSON.stringify(v)); } catch (_) { /* full or blocked */ } };
+// The phone apps pass in the project details (window.careConfig on iOS, careNative.getConfig() on Android).
+function nativeConfig() {
+  try {
+    if (window.careConfig) return window.careConfig;
+    if (window.careNative && window.careNative.getConfig) return JSON.parse(window.careNative.getConfig());
+  } catch (_) { /* no native config */ }
+  return null;
+}
+const nativeCfg = nativeConfig();
+const cloud = {
+  cfg: nativeCfg && nativeCfg.supabaseUrl ? { url: nativeCfg.supabaseUrl, key: nativeCfg.supabaseKey, fixed: true } : readLS(CLOUD_CFG_KEY),
+  session: readLS(CLOUD_SESSION_KEY),
+  mode: 'connecting',   // 'signedout' | 'connecting' | 'edit' | 'view' | 'offline'
+  lock: null,           // from the server: { holder_name, device, since, mine, stale, request_from, request_at }
+  version: 0, updatedAt: null, updatedBy: null, me: null, empty: false,
+  pending: null,        // saved JSON still to upload
+  uploading: false,
+  lastChange: Date.now(),
+  asked: false,         // we've asked the editor to hand over
+  answered: null,       // request_at of the last hand-over request we answered
+  cachedAt: null,
+  error: null,
+};
+const cloudOn = () => !!(cloud.cfg && cloud.cfg.url && cloud.cfg.key);
+function deviceName() {
+  if (nativeCfg && nativeCfg.device) return nativeCfg.device;
+  const ua = navigator.userAgent;
+  return /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android phone' : desktop ? 'desktop app' : 'web browser';
+}
+
 let deskInfo = desktop ? desktop.info() : null; // data folder, and whether this computer can edit
 const holderText = () => deskInfo && deskInfo.holder ? `${deskInfo.holder.user} on ${deskInfo.holder.computer}` : 'another computer';
 let state = load();
 let ui = { find: null, carerView: null, carerViewWeeks: 6, swapForm: null, planCount: 4, leaveForm: null, leaveWeeks: 8, reportWeeks: 13, printWhat: 'runs', importPlan: null, tab: 'schedule', week: mondayOf(todayIso()), editCarer: null, editRun: null, report: null, sickForm: null, cover: [] };
 
 function load() {
+  if (cloudOn()) {
+    // the copy last seen from shared storage, shown until the latest arrives (and when offline)
+    const cached = readLS(CLOUD_CACHE_KEY);
+    if (cached && cached.data) { cloud.version = cached.version || 0; cloud.cachedAt = cached.at; return withDefaults(cached.data); }
+    return newState();
+  }
   try {
     const raw = desktop ? desktop.load() : localStorage.getItem(STORE_KEY);
     if (raw) return withDefaults(JSON.parse(raw));
@@ -1508,6 +1556,20 @@ function save(fromUndo) {
   if (dataProblem) return; // never overwrite data we couldn't read
   const json = stateJson(state);
   if (json === lastSaved) return;
+  if (cloudOn()) {
+    if (cloud.mode !== 'edit') {
+      state = withDefaults(JSON.parse(lastSaved));
+      alert(cloudReadOnlyReason());
+      return;
+    }
+    if (!fromUndo) { undoStack.push(lastSaved); if (undoStack.length > UNDO_LIMIT) undoStack.shift(); }
+    lastSaved = json;
+    cloud.pending = json;
+    cloud.lastChange = Date.now();
+    writeLS(CLOUD_CACHE_KEY, { data: JSON.parse(json), version: cloud.version, at: new Date().toISOString() });
+    cloudUpload();
+    return;
+  }
   if (deskInfo && deskInfo.mode === 'view') {
     // someone else is editing: put things back and say why
     state = withDefaults(JSON.parse(lastSaved));
@@ -1544,6 +1606,11 @@ function undo() {
   render();
 }
 document.getElementById('undoBtn').addEventListener('click', undo);
+document.getElementById('app').addEventListener('submit', e => {
+  if (e.target.id !== 'signInForm') return;
+  e.preventDefault();
+  cloudSignIn(document.getElementById('siEmail').value.trim(), document.getElementById('siPassword').value);
+});
 // close the Share menu when clicking anywhere else
 document.addEventListener('click', e => {
   for (const d of document.querySelectorAll('details.share[open]')) if (!d.contains(e.target)) d.removeAttribute('open');
@@ -1555,8 +1622,253 @@ document.addEventListener('keydown', e => {
   }
 });
 
+// ---- talking to Supabase ----
+async function cloudFetch(path, opts, retried) {
+  opts = opts || {};
+  if (cloud.session && !retried && Date.now() > cloud.session.expires_at - 60e3 && !path.startsWith('/auth/')) await cloudRefreshToken();
+  const headers = Object.assign({ apikey: cloud.cfg.key, 'Content-Type': 'application/json' }, opts.headers || {});
+  if (cloud.session) headers.Authorization = 'Bearer ' + cloud.session.access_token;
+  const res = await fetch(cloud.cfg.url.replace(/\/+$/, '') + path, Object.assign({}, opts, { headers }));
+  if (res.status === 401 && !retried && cloud.session && !path.startsWith('/auth/') && await cloudRefreshToken()) return cloudFetch(path, opts, true);
+  const text = await res.text();
+  let body = null;
+  try { body = text ? JSON.parse(text) : null; } catch (_) { body = text; }
+  if (!res.ok) {
+    const err = new Error((body && (body.message || body.msg || body.error_description || body.error)) || `HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return body;
+}
+const rpc = (fn, args) => cloudFetch('/rest/v1/rpc/' + fn, { method: 'POST', body: JSON.stringify(args || {}) });
+const isOffline = e => e instanceof TypeError || /Failed to fetch|NetworkError|Load failed|network/i.test(e.message || '');
+
+function setSession(r, email) {
+  cloud.session = { access_token: r.access_token, refresh_token: r.refresh_token, expires_at: Date.now() + (r.expires_in || 3600) * 1000,
+    email: (r.user && r.user.email) || email };
+  writeLS(CLOUD_SESSION_KEY, cloud.session);
+}
+async function cloudRefreshToken() {
+  try {
+    const r = await cloudFetch('/auth/v1/token?grant_type=refresh_token', { method: 'POST', body: JSON.stringify({ refresh_token: cloud.session.refresh_token }) });
+    setSession(r, cloud.session.email);
+    return true;
+  } catch (e) {
+    if (!isOffline(e)) { cloud.session = null; writeLS(CLOUD_SESSION_KEY, null); cloud.mode = 'signedout'; }
+    return false;
+  }
+}
+
+async function cloudSignIn(email, password) {
+  cloud.error = null;
+  try {
+    const r = await cloudFetch('/auth/v1/token?grant_type=password', { method: 'POST', body: JSON.stringify({ email, password }) });
+    setSession(r, email);
+    cloud.mode = 'connecting';
+    await cloudStart();
+  } catch (e) {
+    cloud.error = isOffline(e) ? "Can't reach the shared storage – check the connection and the project address." : 'Sign-in failed: ' + e.message;
+    render();
+  }
+}
+async function cloudSignOut() {
+  if (cloud.mode === 'edit') { try { await rpc('cs_release'); } catch (_) { /* offline */ } }
+  cloud.session = null; writeLS(CLOUD_SESSION_KEY, null);
+  cloud.mode = 'signedout';
+  render();
+}
+
+// Put the shared copy on screen (anything not yet uploaded from this device always wins).
+function cloudApply(row) {
+  if (cloud.pending) return;
+  cloud.version = row.version; cloud.updatedAt = row.updated_at; cloud.updatedBy = row.updated_by;
+  if (row.data) {
+    cloud.dataChanged = true;
+    state = withDefaults(row.data);
+    lastSaved = stateJson(state);
+    undoStack.length = 0;
+    cloud.cachedAt = new Date().toISOString();
+    writeLS(CLOUD_CACHE_KEY, { data: row.data, version: row.version, at: cloud.cachedAt });
+  }
+}
+
+async function cloudPullData() {
+  const rows = await cloudFetch('/rest/v1/cs_state?id=eq.main&select=data,version,updated_at,updated_by');
+  if (rows && rows[0]) { cloud.empty = false; cloudApply(rows[0]); } else { cloud.empty = true; cloud.version = 0; }
+}
+
+async function cloudStart() {
+  if (!cloudOn()) return;
+  if (!cloud.session) { cloud.mode = 'signedout'; render(); return; }
+  try {
+    await cloudPullData();
+    const lock = await rpc('cs_take_lock', { p_device: deviceName() });
+    cloud.lock = lock;
+    cloud.mode = lock.mine ? 'edit' : 'view';
+    cloud.lastChange = Date.now();
+  } catch (e) {
+    if (isOffline(e)) cloud.mode = 'offline';
+    else if (/not_staff/.test(e.message)) { cloud.error = `${cloud.session.email} isn't on the staff list for this shared storage – ask whoever set it up to add you.`; cloud.mode = 'signedout'; }
+    else if (cloud.mode !== 'signedout') { cloud.error = e.message; cloud.mode = 'offline'; }
+  }
+  render();
+}
+
+// Every few seconds: anything new? who is editing? (for the editor this also keeps the lock alive)
+async function cloudTick() {
+  if (!cloudOn() || !cloud.session || cloud.mode === 'signedout' || cloud.ticking) return;
+  cloud.ticking = true;
+  const modeBefore = cloud.mode;
+  cloud.dataChanged = false;
+  try {
+    const wasOffline = cloud.mode === 'offline';
+    const st = await rpc('cs_status');
+    cloud.lock = st.lock; cloud.me = st.me;
+    if (wasOffline) { cloud.mode = st.lock.mine ? 'edit' : 'view'; if (cloud.pending && cloud.mode === 'edit') cloudUpload(); }
+    if (cloud.mode === 'edit' && !st.lock.mine) {
+      cloud.mode = 'view'; cloud.pending = null;
+      alert(`${st.lock.holder_name || 'Someone else'} is now editing, so this ${deviceName()} has switched to view only.`);
+      await cloudPullData();
+    } else if (cloud.mode === 'view' && st.lock.mine) {
+      cloud.mode = 'edit';
+    }
+    if (st.version !== cloud.version && !(cloud.mode === 'edit' && cloud.pending)) await cloudPullData();
+    if (cloud.mode === 'view' && st.lock.stale && cloud.asked) {
+      // the editor handed over (or went away) after we asked: take over
+      const lock = await rpc('cs_take_lock', { p_device: deviceName() });
+      cloud.lock = lock;
+      if (lock.mine) { cloud.mode = 'edit'; cloud.asked = false; cloud.lastChange = Date.now(); }
+    }
+    if (cloud.mode === 'edit' && st.lock.request_from && st.lock.request_at !== cloud.answered) {
+      cloud.answered = st.lock.request_at;
+      if (confirm(`${st.lock.request_from} would like to edit the rota.\n\nHand over now? (Your changes are already saved.)`)) await cloudDoneEditing();
+    }
+    if (cloud.mode === 'edit' && !cloud.pending && Date.now() - cloud.lastChange > IDLE_RELEASE_MS) await cloudDoneEditing(true);
+  } catch (e) {
+    if (isOffline(e)) cloud.mode = 'offline';
+  } finally {
+    cloud.ticking = false;
+  }
+  if (cloud.dataChanged || cloud.mode !== modeBefore) render(); else refreshBanner();
+}
+
+async function cloudUpload() {
+  if (cloud.uploading || !cloud.pending) return;
+  cloud.uploading = true;
+  cloud.dataChanged = false;
+  const json = cloud.pending;
+  try {
+    const v = await rpc('cs_save', { p_expected: cloud.version, p_data: JSON.parse(json) });
+    cloud.version = v; cloud.empty = false; cloud.updatedAt = new Date().toISOString(); cloud.updatedBy = cloud.me;
+    if (cloud.pending === json) cloud.pending = null;
+  } catch (e) {
+    if (isOffline(e)) cloud.mode = 'offline';
+    else if (/not_editor/.test(e.message)) {
+      cloud.pending = null; cloud.mode = 'view';
+      alert("Someone else took over editing before this change was saved, so it hasn't been kept. Here's the latest version.");
+      await cloudPullData().catch(() => {});
+    } else if (/version_conflict/.test(e.message)) {
+      cloud.pending = null;
+      alert('The shared rota was changed somewhere else, so this change wasn\'t saved. Here\'s the latest version.');
+      await cloudPullData().catch(() => {});
+    } else alert('Could not save to the shared storage: ' + e.message);
+  } finally {
+    cloud.uploading = false;
+  }
+  if (cloud.pending && cloud.mode === 'edit') setTimeout(cloudUpload, 300);
+  if (cloud.dataChanged || cloud.mode !== 'edit') render(); else refreshBanner();
+}
+
+async function cloudDoneEditing(idle) {
+  if (cloud.pending) await cloudUpload();
+  try { cloud.lock = await rpc('cs_release'); } catch (e) { if (isOffline(e)) cloud.mode = 'offline'; }
+  if (cloud.mode !== 'offline') cloud.mode = 'view';
+  if (idle) ui.report = 'You hadn\'t made any changes for 10 minutes, so editing was handed back for others. Press "Start editing" to carry on.';
+  render();
+}
+
+async function cloudStartEditing() {
+  try {
+    const lock = await rpc('cs_take_lock', { p_device: deviceName() });
+    cloud.lock = lock;
+    if (lock.mine) { cloud.mode = 'edit'; cloud.asked = false; cloud.lastChange = Date.now(); await cloudPullData(); }
+    else alert(`${lock.holder_name} is editing on ${lock.device}. Press "Ask to edit" to ask them to hand over.`);
+  } catch (e) { if (isOffline(e)) cloud.mode = 'offline'; else alert(e.message); }
+  render();
+}
+
+async function cloudAskToEdit() {
+  try { cloud.lock = await rpc('cs_request_edit'); cloud.asked = true; } catch (e) { if (isOffline(e)) cloud.mode = 'offline'; else alert(e.message); }
+  render();
+}
+
+// First connection to an empty shared storage: upload what's on this device.
+async function cloudUploadThisDevice() {
+  if (!confirm('Upload the carers, runs and schedules on this device to the shared storage, so every device uses them?')) return;
+  try {
+    const lock = await rpc('cs_take_lock', { p_device: deviceName() });
+    if (!lock.mine) { alert(`${lock.holder_name} is editing at the moment – try again when they've finished.`); return; }
+    const v = await rpc('cs_save', { p_expected: 0, p_data: JSON.parse(stateJson(state)) });
+    cloud.version = v; cloud.empty = false; cloud.mode = 'edit'; cloud.lock = lock;
+    writeLS(CLOUD_CACHE_KEY, { data: JSON.parse(stateJson(state)), version: v, at: new Date().toISOString() });
+    alert('Uploaded. Every device signed in to this shared storage now sees this data.');
+  } catch (e) { alert('Could not upload: ' + e.message); }
+  render();
+}
+
+function cloudReadOnlyReason() {
+  if (cloud.mode === 'offline') return "No connection – you're looking at the last copy that was downloaded, so changes can't be made until you're back online.";
+  if (cloud.mode === 'connecting') return 'Still connecting to the shared storage – try again in a moment.';
+  const l = cloud.lock || {};
+  if (l.holder_name && !l.stale) return `View only – ${l.holder_name} is editing on ${l.device || 'another device'}.\n\nThis screen updates as they save. Press "Ask to edit" to ask them to hand over.`;
+  return 'View only – press "Start editing" first.';
+}
+
+function cloudBanner() {
+  if (!cloudOn() || cloud.mode === 'signedout') return '';
+  const l = cloud.lock || {};
+  const since = l.since ? new Date(l.since).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+  if (cloud.mode === 'connecting') return '<div class="cloudbar">⏳ Connecting to the shared storage…</div>';
+  if (cloud.mode === 'offline') {
+    const at = cloud.cachedAt ? new Date(cloud.cachedAt).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'earlier';
+    return `<div class="cloudbar offline">📴 <b>Offline</b> – showing the copy from ${esc(at)}. You can look, but changes can't be made until you're back online.
+      ${cloud.pending ? '<b>Your last change hasn\'t been uploaded yet</b> – it will be as soon as the connection is back.' : ''}</div>`;
+  }
+  if (cloud.mode === 'edit') {
+    return `<div class="cloudbar edit">✏️ <b>You're editing</b> – everyone else sees your changes as you make them.
+      <span class="savestate">${cloud.pending || cloud.uploading ? 'Saving…' : 'Saved ✓'}</span>
+      <button class="btn" data-action="cloudDone">Done editing</button></div>`;
+  }
+  if (l.holder_name && !l.stale) {
+    return `<div class="viewonly">👁 <b>View only</b> – ${esc(l.holder_name)} is editing on ${esc(l.device || 'another device')}${since ? ` (since ${esc(since)})` : ''}.
+      This screen updates as they save. ${cloud.asked ? '<b>You\'ve asked them to hand over</b> – you\'ll take over as soon as they do.' : '<button class="btn" data-action="cloudAsk">Ask to edit</button>'}</div>`;
+  }
+  return `<div class="viewonly">👁 <b>View only</b> – nobody is editing at the moment. <button class="btn primary" data-action="cloudStart">Start editing</button></div>`;
+}
+
+// Update just the status banner (the regular checks must not redraw the page under someone's fingers).
+function refreshBanner() {
+  const el = document.getElementById('cloudBanner');
+  if (el) el.innerHTML = viewOnlyBanner(); else render();
+}
+
+function signInView() {
+  return `<div class="panel signin">
+    <h2 style="margin-top:0">Sign in to CareSchedule</h2>
+    <p class="muted">Your rota is kept in shared storage so everyone in the office sees the same thing. Sign in with your work email.</p>
+    ${cloud.error ? `<p class="over">${esc(cloud.error)}</p>` : ''}
+    <form id="signInForm">
+      <div class="row"><label>Email <input type="email" id="siEmail" autocomplete="username" required size="30" value="${esc((cloud.session && cloud.session.email) || '')}"></label></div>
+      <div class="row"><label>Password <input type="password" id="siPassword" autocomplete="current-password" required size="30"></label></div>
+      <button class="btn primary" type="submit">Sign in</button>
+    </form>
+    ${cloud.cfg && !cloud.cfg.fixed ? '<p class="muted" style="margin-top:16px">Or <button class="linkbtn" data-action="cloudDisconnect">stop using shared storage on this device</button>.</p>' : ''}
+  </div>`;
+}
+
 // Data changed on another computer (we're view-only), or the editing lock changed hands.
 function reloadFromDisk() {
+  if (cloudOn()) return;
   state = load();
   lastSaved = stateJson(state);
   undoStack.length = 0;
@@ -1574,6 +1886,7 @@ if (desktop) {
 }
 
 function viewOnlyBanner() {
+  if (cloudOn()) return cloudBanner();
   if (!deskInfo || deskInfo.mode !== 'view') return '';
   const since = deskInfo.holder ? new Date(deskInfo.holder.since).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }) : '';
   return `<div class="viewonly">👁 <b>View only</b> – ${esc(holderText())} has CareSchedule open${since ? ` (since ${esc(since)})` : ''}, so only one computer can make changes.
@@ -1584,7 +1897,8 @@ function render() {
   document.getElementById('undoBtn').disabled = !undoStack.length;
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === ui.tab));
   const app = document.getElementById('app');
-  app.innerHTML = viewOnlyBanner() + { schedule: viewSchedule, carers: viewCarers, runs: viewRuns, leave: viewLeave, reports: viewReports, settings: viewSettings }[ui.tab]();
+  if (cloudOn() && cloud.mode === 'signedout') { app.innerHTML = signInView(); return; }
+  app.innerHTML = `<div id="cloudBanner">${viewOnlyBanner()}</div>` + { schedule: viewSchedule, carers: viewCarers, runs: viewRuns, leave: viewLeave, reports: viewReports, settings: viewSettings }[ui.tab]();
 }
 
 // ---------- Schedule ----------
@@ -2639,6 +2953,25 @@ function viewSettings() {
       and is shuffled, so allocation is random rather than alphabetical. Fill weeks in date order so the history is right.</p>
   </div>
   <div class="panel">
+    <h3 style="margin-top:0">Shared storage (all devices)</h3>
+    ${cloudOn() ? `
+      <p>Connected to <code>${esc(cloud.cfg.url)}</code>${cloud.session ? ` as <b>${esc(cloud.me || cloud.session.email)}</b>` : ''}.
+        ${cloud.version ? `Shared rota version ${cloud.version}${cloud.updatedBy ? `, last saved by ${esc(cloud.updatedBy)}` : ''}.` : ''}</p>
+      ${cloud.empty ? `<p class="under">The shared storage is empty. <button class="btn primary" data-action="cloudUploadDevice">Upload this device's data</button></p>` : ''}
+      <div class="toolbar">
+        ${cloud.session ? '<button class="btn" data-action="cloudSignOut">Sign out</button>' : ''}
+        ${cloud.cfg.fixed ? '' : '<button class="btn danger" data-action="cloudDisconnect">Stop using shared storage</button>'}
+      </div>
+      <p class="muted">Every device signed in here shares one rota. One person edits at a time; everyone else sees changes within a few seconds.
+        A copy is kept on this device so it can still be viewed without a connection. Daily copies are kept in Supabase for 30 days.</p>`
+    : `<p>Keep the rota in <b>Supabase</b> so every device (office computers, phones, tablets) shares it. Set up the project with
+        <code>supabase/setup.sql</code> (see the README), then enter its details from <i>Project Settings → API</i>:</p>
+      <div class="row"><label>Project URL <input id="cloudUrl" size="40" placeholder="https://xxxx.supabase.co"></label></div>
+      <div class="row"><label>anon public key <input id="cloudKey" size="40" placeholder="eyJ…"></label></div>
+      <button class="btn primary" data-action="cloudConnect">Connect</button>
+      <p class="muted">After connecting you sign in. If the shared storage is empty you can upload this device's data to start it off.</p>`}
+  </div>
+  <div class="panel">
     <h3 style="margin-top:0">Your data</h3>
     ${desktop ? `<p>Everything is saved automatically to:<br><code>${esc(deskInfo.file)}</code>
       ${deskInfo.cloud ? `<span class="tag drv">${esc(deskInfo.cloud)} ✓</span>` : ''}</p>
@@ -2897,6 +3230,25 @@ document.getElementById('app').addEventListener('click', e => {
       break;
     }
 
+    case 'cloudDone': cloudDoneEditing(); return;
+    case 'cloudAsk': cloudAskToEdit(); return;
+    case 'cloudStart': cloudStartEditing(); return;
+    case 'cloudSignOut': cloudSignOut(); return;
+    case 'cloudUploadDevice': cloudUploadThisDevice(); return;
+    case 'cloudDisconnect':
+      if (!confirm('Stop using shared storage on this device? The rota will go back to being kept only on this device (starting from the last shared copy).')) return;
+      if (cloud.mode === 'edit') rpc('cs_release').catch(() => {});
+      writeLS(CLOUD_CFG_KEY, null); writeLS(CLOUD_SESSION_KEY, null);
+      cloud.cfg = null; cloud.session = null;
+      save(); render(); return;
+    case 'cloudConnect': {
+      const url = document.getElementById('cloudUrl').value.trim(), key = document.getElementById('cloudKey').value.trim();
+      if (!/^https:\/\/.+/.test(url) || key.length < 20) { alert('Enter the Project URL (starts https://) and the anon public key from Supabase → Project Settings → API.'); return; }
+      cloud.cfg = { url, key }; writeLS(CLOUD_CFG_KEY, cloud.cfg);
+      cloud.mode = 'signedout'; render();
+      startCloud();
+      return;
+    }
     case 'openDataFolder': desktop.openFolder(); return;
     case 'chooseFolder':
       desktop.chooseFolder().then(r => {
@@ -3033,6 +3385,13 @@ document.getElementById('app').addEventListener('change', e => {
 });
 
 render();
+function startCloud() {
+  if (cloud.timer) return;
+  cloud.timer = setInterval(cloudTick, POLL_MS);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) cloudTick(); });
+  window.addEventListener('online', () => cloudTick());
+}
+if (cloudOn()) { cloudStart(); startCloud(); }
 if (desktop && desktop.info().notice) alert(desktop.info().notice);
 if (dataProblem) {
   alert(`Your saved data could not be read (${dataProblem}).\n\nNothing will be saved until you restore it: go to Settings & Data → Import backup` +
