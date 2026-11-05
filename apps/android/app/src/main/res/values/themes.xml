@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.CareSchedule" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:colorPrimary">#2563EB</item>
+        <item name="android:colorAccent">#2563EB</item>
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
+</resources>

@@ -1,6 +1,8 @@
 # CareSchedule
 
-An offline weekly scheduler for domiciliary care runs. It works on **Windows and Mac** with **no internet**.
+An offline weekly scheduler for domiciliary care runs. It works on **Windows and Mac** with **no internet**, and optionally
+shares one rota across the office computers and work phones – either from a **Google Drive folder** (one person at a time)
+or through **Supabase** with **iPhone and Android** apps (see *Google Drive version*, *Shared storage* and *Phone apps*).
 
 ## Desktop app (recommended)
 
@@ -11,6 +13,11 @@ if the browser is cleared.
 **CareSchedule-Windows** (installer `.exe`) or **CareSchedule-macOS** (`.dmg`) from *Artifacts*.
 When a version tag such as `v1.0.0` is pushed, the same files are also attached to a **Release**.
 
+- **Windows (portable – nothing to install):** `CareSchedule-Portable-….exe`. Put it in any folder or on a USB stick
+  and double-click it. Its data, backups and settings are kept in a **CareSchedule Data** folder next to the `.exe`, so
+  to move to another computer just copy the `.exe` and that folder together. (It takes a few seconds longer to start
+  than the installed version.) Close CareSchedule before unplugging a USB stick, and keep an *Export backup* elsewhere
+  in case the stick is lost.
 - **Windows:** run `CareSchedule-Setup-….exe`. Windows may show "Windows protected your PC" because the app
   isn't code-signed: click **More info → Run anyway**.
 - **Mac:** open the `.dmg` and drag CareSchedule into Applications. The first time, right-click the app and
@@ -50,6 +57,140 @@ In the browser, data is saved in that browser on that computer. Use **Export bac
 data to another computer), and **Import backup** to restore. Always open the file from the same location
 in the same browser, otherwise the browser treats it as a fresh copy.
 
+## Google Drive version – one person at a time, nothing else to sign up for
+
+The rota can also run entirely from a **Google Drive folder**: a small Google Apps Script (in
+[`apps-script/Code.gs`](apps-script/Code.gs)) serves the page as a private web link, and the data is a file in that
+folder. Staff open the link on any computer or phone and sign in with their normal Google account.
+
+- **Only one person can have the rota open at a time.** Anyone else who opens the link sees *🔒 In use – Sarah has the
+  rota open on iPhone (since 9:05)* and is kept out. Their page checks every 15 seconds and opens the rota for them as
+  soon as it's free. They can press **Ask them to close it**: Sarah is asked, and can close it with one tap.
+- It frees up when the person presses **Close** at the top, after **15 minutes without use**, or **90 seconds** after
+  their device stops checking in (the tab was closed or the phone went to sleep).
+- The same person opening it on a second device can choose **That's me – open it here instead**.
+- **Every change is saved as a new file** in the same folder as `CareSchedule.html`, named like
+  `CareSchedule data 2026-11-05 14.32.10 (change 123).json`, and **opening the rota loads the newest one**. To go back
+  to an earlier version, delete the newer files in Drive (or move them out of the folder), then open the rota again.
+  The last **200 changes** are kept, plus the **last change of each day for 30 days** (`KEEP_CHANGES` and `KEEP_DAYS`
+  at the top of `Code.gs`). In a normal shared folder only the person who saved a file can bin it, so each person's
+  old files are cleared out by their own later saves.
+- **Who can use it** is simply who the folder is shared with.
+- It needs a connection (nothing works offline), and phones use the link in the browser rather than the phone apps.
+
+### Setting it up (about 10 minutes)
+
+1. In Google Drive make a folder, e.g. **CareSchedule**, and upload **`CareSchedule.html`** into it. **Share** the
+   folder with everyone who uses the rota, as **Editor**.
+2. Open the folder and copy its ID – the long code at the end of the address, after `/folders/`.
+3. Go to [script.google.com](https://script.google.com) → **New project**, name it *CareSchedule*. Replace everything in
+   `Code.gs` with the contents of [`apps-script/Code.gs`](apps-script/Code.gs), paste the folder ID into
+   `FOLDER_ID` at the top, and press **Save**.
+4. **Deploy → New deployment →** ⚙ **Web app**. Set *Execute as* to **User accessing the web app** and *Who has access*
+   to **Anyone with a Google account**, then **Deploy**. Copy the **Web app** link and send it to the staff.
+   (Only people the folder is shared with can actually open the rota; anyone else is told they don't have access.)
+5. The first time each person opens the link, Google asks them to allow it to use their Drive (that's where the rota
+   is). Because it's your own private script rather than a published app, Google shows *"Google hasn't verified this
+   app"* – click **Advanced → Go to CareSchedule** and **Allow**.
+6. **On phones:** open the link in Safari or Chrome and choose **Add to Home Screen**, so it opens like an app.
+7. **Bringing in your existing rota:** in the desktop app *Settings & Data → Export backup*, then in the Google Drive
+   version *Settings & Data → Import backup*. (The Google Drive version keeps its own files, so it never clashes
+   with the desktop app's data file. An exported backup is the same format as the *CareSchedule data* files.)
+
+**Updating** to a newer `CareSchedule.html`: in the Drive folder, right-click the file → *File information → Manage
+versions → Upload new version* (or upload it again – the newest copy is used). There's no need to deploy again. Only
+redeploy (*Deploy → Manage deployments → Edit → New version*) if `Code.gs` itself changes.
+
+## Shared storage – one rota on every device
+
+Instead of the data living on one computer (or in Google Drive), it can be kept in **Supabase** (a hosted database), so
+the office computers, browsers and work phones all share **one rota**. Whoever makes a change, everyone sees it within a
+few seconds.
+
+- **One editor at a time.** The first person to make a change becomes the editor. Everyone else sees *View only – Sarah
+  is editing on iPhone* and can press **Ask to edit**: Sarah is asked to hand over, and if she agrees (or has made no
+  change for 10 minutes, or her device has gone quiet for 2 minutes) the asker takes over. **Done editing** hands it back.
+- **No connection:** the last copy downloaded stays on the device and can be viewed, but can't be changed until it's
+  back online.
+- **Who can get in:** only people you add to the staff list, each signing in with their own email and password.
+  Supabase keeps a copy of the rota each day for 30 days.
+
+### Setting it up (once, about 15 minutes)
+
+1. Create a free account at [supabase.com](https://supabase.com) and a **new project**. Choose the **London (eu-west-2)**
+   region so the data stays in the UK, and keep the database password somewhere safe.
+2. In the project, open **SQL Editor → New query**, paste in the whole of [`supabase/setup.sql`](supabase/setup.sql) and
+   press **Run**.
+3. Add your office staff to the staff list – in the SQL Editor run one line per person:
+   ```sql
+   insert into public.cs_staff (email, name) values ('sarah@yourcompany.co.uk', 'Sarah');
+   ```
+   (To remove someone: `delete from public.cs_staff where email = 'sarah@yourcompany.co.uk';`)
+4. Give each of them a sign-in: **Authentication → Users → Add user → Create new user**, with their email, a password,
+   and *Auto Confirm User* ticked. Then in **Authentication → Sign In / Providers**, turn **off** *Allow new users to
+   sign up*, so nobody else can create an account.
+5. Note the **Project URL** (*Project Settings → Data API*) and the **publishable key** (*Project Settings → API Keys*;
+   older projects call it the *anon public* key). These are safe to put in the apps – the staff list and the rules in
+   `setup.sql` are what keep the data private.
+
+### Connecting each device
+
+- **Desktop app or browser:** *Settings & Data → Shared storage*, enter the Project URL and key, press **Connect** and
+  sign in. On the **first** device, if the shared storage is empty, press **Upload this device's data** to start it off
+  with your existing carers, runs and history (or *Load sample data* to try it out).
+- **Phone apps:** put the URL and key in `apps/config.json` before building (below), and staff only have to sign in. If
+  you leave it blank, they enter it once under *Settings & Data* like the desktop.
+
+Carers' names, availability and sickness are personal data, so keep the staff list to people who need it, use strong
+passwords, and add Supabase to your GDPR records as a data processor (their Data Processing Agreement is in the
+dashboard under *Organization → Legal Documents*).
+
+## Phone apps (iPhone and Android)
+
+`apps/ios` (Xcode) and `apps/android` (Android Studio) are small native apps that show the same `CareSchedule.html`
+full screen, so every rule and feature is the same as on the desktop – there's only one copy of the app to keep up to
+date. On a phone the schedule shows **one day at a time** as cards: tap a day or **swipe** left and right, and
+**More** opens the other schedule tools. The native side adds the phone's **share sheet** for files and PDFs (WhatsApp,
+email, Save to Files / Drive), **printing**, and pop-up messages. They use the shared storage above, so set that up first.
+
+Nothing is published to the App Store or Google Play.
+
+**Before building:** fill in `apps/config.json` with your Project URL and publishable key (optional, see above).
+
+### iPhone (Xcode, on a Mac)
+
+1. Open `apps/ios/CareSchedule.xcodeproj` in Xcode (16 or later).
+2. Click the **CareSchedule** project → target **CareSchedule** → **Signing & Capabilities**: choose your **Team** and
+   change the **Bundle Identifier** (`uk.careschedule.rota`) to one of your own, e.g. `uk.co.yourcompany.careschedule`.
+3. To put it on a phone that's plugged in: choose the phone at the top and press **Run** (▶). The phone needs
+   *Developer Mode* turned on (Settings → Privacy & Security), and the first time *Settings → General → VPN & Device
+   Management → trust your developer account*.
+4. For the office's phones without plugging each one in, use **TestFlight internal testing**: *Product → Archive →
+   Distribute App → TestFlight Internal Only*. In App Store Connect add staff as internal testers (they need to be
+   users on your developer account); they install the **TestFlight** app and get the CareSchedule from there. Internal
+   builds are never reviewed or shown on the App Store. Each build lasts 90 days, so upload a new one before then.
+   (If your account is an *Apple Developer Enterprise* account, you can instead export an in-house `.ipa` and share it
+   through your device management.)
+
+### Android (Android Studio)
+
+1. Open the `apps/android` folder in Android Studio and let it sync.
+2. To try it: plug in a phone with *USB debugging* on (or start an emulator) and press **Run** (▶).
+3. To install on the office phones: *Build → Generate Signed App Bundle or APK → APK*, create a key the first time
+   (keep the `.jks` file and its passwords safe – every later update must be signed with the same key), and send the
+   `.apk` to the phones (email, Drive or your device management). On the phone, allow *Install unknown apps* for the app
+   you open it from. If you use **Google Play managed private apps** through your device management, the same app can be
+   pushed that way without appearing in the public Play Store.
+
+### Builds on GitHub
+
+**Actions → Build phone apps** builds both apps after every change, so you know they still compile, and checks the
+shared-storage rules. The Android `.apk` is under the run's *Artifacts* (**CareSchedule-android**). To have GitHub sign
+it with your own key (so updates install over the top), add these repository secrets under *Settings → Secrets and
+variables → Actions*: `CS_KEYSTORE_B64` (the `.jks` file as base64: `base64 -i office.jks | pbcopy` on a Mac),
+`CS_KEYSTORE_PASSWORD`, `CS_KEY_ALIAS` and `CS_KEY_PASSWORD`. The iPhone build there is for the simulator only;
+installing on iPhones is always done from Xcode with your developer account.
+
 ## Features
 
 - **Carers** – add, edit, remove (or mark inactive). Each has gender, driver / non-driver, days per week,
@@ -84,6 +225,27 @@ in the same browser, otherwise the browser treats it as a fresh copy.
 - **Finalise week** – once a week is done, **✔ Finalise week** switches off Auto-fill, Fill gaps only,
   clearing and editing for it, so it can't be changed by accident (the weekend and days-in-a-row rules rely
   on past weeks being right). Sickness cover still works on a finalised week. **Reopen week** undoes it.
+- **Half days** – the **½** button on any place on the Schedule splits it into two parts, each with its own carer and
+  its own start and finish times (24-hour, e.g. 07:00–14:00 and 14:00–21:00 – type 730 for 07:30). The times start
+  from the run's *Half-day times* on the Runs page and can be changed on each split. Split places are by hand only:
+  auto-fill never creates or changes them. A half day counts as **half a day** towards days per week, and as a day
+  worked for the days-in-a-row and weekend rules. Rules are checked by time: a driver must be on for each part, a
+  carer can do a morning on one run and an afternoon on another (overlapping times are flagged as double booked), and
+  "can't work with", gender and leave are checked for whoever is on at the same time. Printouts, PDFs, the carer view
+  and change notices show the times. *Make whole day* undoes a split.
+- **Day-off requests** – add one as a leave type ("Day-off request") on the Leave page or the carer's page. Unlike
+  leave it isn't a hard block: auto-fill avoids the day wherever cover allows, and if it can't, the day is flagged
+  amber ("asked for Wed off") and the auto-fill report says how many requests couldn't be met.
+- **Regular patterns** – on a carer's page, *Usually works* ticks the days they normally work, every week or every
+  other week (e.g. every other weekend). Auto-fill puts them on those days first; the safety rules still come first.
+- **What changed since shared** – sharing a PDF or printing a carer rota remembers what was sent. If the week then
+  changes, the Schedule says so ("2 changes for 2 carers"), lists each change, and *Share update* makes a PDF for just
+  the carers affected, with the changed days marked.
+- **Swap shifts** – *⇄ Swap*: pick a carer and one of their shifts, and who they're swapping with (the same day to swap
+  runs, another of their shifts to swap days, or nothing if they're just taking it). Every rule is checked for both
+  before anything changes; works on finalised weeks too.
+- **Find a carer** – type a name in *🔍 Find carer* to highlight all their shifts and see their next 4–8 weeks
+  (also by clicking a name in the carer summary).
 - **Share** – the **Share ▾** button on the Schedule has everything for getting the rota out:
   - **PDF for carers:** a designed **team rota** (landscape: colour-coded runs, who each carer is working with, an
     *Open shifts* box so staff can offer to pick them up) or **one page per carer** (their week day by day). Both
@@ -171,5 +333,7 @@ and a random shuffle (see `WEIGHTS` in the engine).
 ## Tests
 
 ```
-node tests/engine.test.js
+node tests/engine.test.js          # the auto-fill rules
+cd supabase/test && npm ci && npm test   # the shared-storage rules (runs setup.sql in a test database)
+node apps-script/test/code.test.js     # the Google Drive version's one-person-at-a-time rules
 ```

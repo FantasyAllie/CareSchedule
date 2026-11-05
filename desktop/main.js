@@ -20,6 +20,12 @@ let holder = null;          // who has the lock when we're view-only
 let lastWritten = null;     // content we last read or wrote, to spot changes made elsewhere
 const me = { id: crypto.randomUUID(), user: os.userInfo().username, computer: os.hostname() };
 
+// Portable Windows build (CareSchedule-Portable-….exe): electron-builder sets PORTABLE_EXECUTABLE_DIR to the folder the
+// .exe was started from. The data, its backups and the app's own settings then all live in "CareSchedule Data" next to
+// the .exe, so the program and its data can be carried from computer to computer (e.g. on a USB stick).
+const portableDir = process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'CareSchedule Data') : null;
+if (portableDir) app.setPath('userData', path.join(portableDir, 'app-settings'));
+
 const configFile = () => path.join(app.getPath('userData'), 'config.json');
 function readConfig() { try { return JSON.parse(fs.readFileSync(configFile(), 'utf8')); } catch (_) { return {}; } }
 function writeConfig(cfg) { fs.mkdirSync(path.dirname(configFile()), { recursive: true }); fs.writeFileSync(configFile(), JSON.stringify(cfg, null, 2)); }
@@ -31,7 +37,18 @@ function setPaths(dir) {
   lockFile = path.join(dataDir, 'careschedule.lock');
   fs.mkdirSync(backupDir, { recursive: true });
 }
-const defaultDir = () => process.env.CARESCHEDULE_DATA_DIR || readConfig().dataDir || path.join(app.getPath('documents'), 'CareSchedule');
+function defaultDir() {
+  if (process.env.CARESCHEDULE_DATA_DIR) return process.env.CARESCHEDULE_DATA_DIR;
+  const fallback = portableDir || path.join(app.getPath('documents'), 'CareSchedule');
+  const chosen = readConfig().dataDir;
+  if (chosen && !fs.existsSync(chosen)) {
+    // e.g. a Google Drive folder chosen on another computer, carried here with the portable version
+    notice = `The data folder chosen earlier (${chosen}) isn't on this computer, so CareSchedule is using ${fallback} instead.\n` +
+      'To go back to it, use Settings & Data → Change data folder… on a computer where it exists.';
+    return fallback;
+  }
+  return chosen || fallback;
+}
 
 const today = () => new Date().toISOString().slice(0, 10);
 const backups = () => fs.readdirSync(backupDir).filter(f => /^careschedule-\d{4}-\d{2}-\d{2}\.json$/.test(f)).sort();
@@ -136,7 +153,7 @@ function checkForChanges() {
 }
 
 function info() {
-  return { file: dataFile, folder: dataDir, keep: KEEP_BACKUPS, notice, mode, holder, me, cloud: cloudName(dataDir) };
+  return { file: dataFile, folder: dataDir, keep: KEEP_BACKUPS, notice, mode, holder, me, cloud: cloudName(dataDir), portable: !!portableDir };
 }
 
 ipcMain.on('data:load', e => { e.returnValue = loadData(); });

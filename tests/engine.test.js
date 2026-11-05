@@ -496,6 +496,140 @@ test('fairness report counts days, weekends, overtime, shortfalls and leave', ()
   assert.deepStrictEqual([b.days, b.short, b.weekendsWorked], [4, 0, 0]);
 });
 
+test('day-off requests are honoured when cover allows, and flagged when not', () => {
+  const wed = E.addDays(WEEK, 2);
+  for (let i = 0; i < 10; i++) {
+    const s = rosterState();
+    s.carers.find(c => c.id === 'F1').leave = [{ type: 'REQ', from: wed, to: wed }];
+    E.autoFill(s, WEEK, { random: seeded(1300 + i) });
+    check(s);
+    const v = E.validate(s, WEEK);
+    assert(!v.carers.F1.days[2], 'request ignored although others could cover');
+    assert(E.carerStatus(s.carers.find(c => c.id === 'F1'), WEEK, 2).ok, 'a request is not leave');
+  }
+  // only one carer can cover: the request has to give way, and says so
+  const s = E.newState();
+  s.carers = [carer('A', 'F', true, 3, { leave: [{ type: 'REQ', from: wed, to: wed }] })];
+  s.runs = [Object.assign(run('S', 'single'), { days: [false, false, true, false, false, false, false] })]; // Wednesdays only
+  const r = E.autoFill(s, WEEK, { random: seeded(1) });
+  assert(r.log.some(l => /1 day-off request\(s\) couldn't be met/.test(l)), r.log.join('\n'));
+  assert(r.issues.list.some(x => x.level === 'warn' && /A: asked for Wed/.test(x.msg)));
+});
+
+test('regular patterns: carers mostly work their usual days, weekly or every other week', () => {
+  let onDays = 0, total = 0;
+  for (let i = 0; i < 10; i++) {
+    const s = rosterState();
+    const p = s.carers.find(c => c.id === 'F5');
+    p.daysPerWeek = 3; p.pattern = { days: [true, true, true, false, false, false, false], every: 1 };
+    E.autoFill(s, WEEK, { random: seeded(1400 + i) });
+    check(s);
+    const v = E.validate(s, WEEK).carers.F5;
+    total += v.count; onDays += v.days.slice(0, 3).filter(Boolean).length;
+  }
+  console.log(`     (weekly Mon-Wed pattern: ${onDays} of ${total} days worked were pattern days)`);
+  assert(onDays / total >= 0.9);
+  // every other weekend
+  const s = rosterState();
+  const q = s.carers.find(c => c.id === 'F7');
+  q.pattern = { days: [false, false, false, false, false, true, true], every: 2, from: WEEK };
+  let onWk = 0, offWk = 0;
+  for (let w = 0; w < 6; w++) {
+    E.autoFill(s, E.addDays(WEEK, 7 * w), { random: seeded(1500 + w) });
+    const days = E.validate(s, E.addDays(WEEK, 7 * w)).carers.F7.days;
+    if (days[5] && days[6]) { if (w % 2 === 0) onWk++; else offWk++; }
+  }
+  console.log(`     (every-other-weekend pattern: worked ${onWk} of 3 pattern weekends, ${offWk} of 3 others)`);
+  assert(onWk >= 2 && offWk <= 1);
+});
+
+test('what changed since the rota was shared', () => {
+  const s = rosterState();
+  E.autoFill(s, WEEK, { random: seeded(3) });
+  assert.strictEqual(E.changesSinceShared(s, WEEK), null);
+  E.markShared(s, WEEK);
+  assert.strictEqual(E.changesSinceShared(s, WEEK).length, 0);
+  const cell = E.getCell(E.getWeek(s, WEEK), s.runs[3], 3);   // R4 Thursday
+  const was = cell.slots[0].c;
+  const other = s.carers.find(c => c.driver && c.id !== was && !E.validate(s, WEEK).carers[c.id].days[3]).id;
+  cell.slots[0].c = other;
+  const ch = E.changesSinceShared(s, WEEK);
+  const text = ch.map(x => `${x.carer.id} ${x.d} ${x.was} -> ${x.now}`).sort().join(' | ');
+  assert.strictEqual(text, [`${other} 3 Day off -> R4`, `${was} 3 R4 -> Day off`].sort().join(' | '));
+});
+
+test('swap shifts: same day, different days, giving a shift away, and rule problems', () => {
+  const s = E.newState();
+  s.carers = [carer('A', 'F', true, 5), carer('B', 'F', true, 5), carer('C', 'F', true, 5, { leave: [{ type: 'AL', from: WEEK, to: WEEK }] }), carer('M', 'M', true, 5)];
+  s.runs = [run('R1', 'single', 'F'), run('R2', 'single', 'F')];
+  const w = E.getWeek(s, WEEK);
+  const put = (r, d, c) => { E.getCell(w, s.runs[r], d).slots[0] = { c, locked: false, override: false }; };
+  put(0, 0, 'A'); put(1, 0, 'B'); put(0, 1, 'B'); put(1, 2, 'A');
+  const at = (r, d) => E.getCell(w, s.runs[r], d).slots[0].c;
+  let p = E.planSwap(s, WEEK, 'A', 0, 'B', 0);                       // same day: swap runs
+  assert.strictEqual(p.problems.length, 0); p.apply(s);
+  assert.strictEqual(at(0, 0) + at(1, 0), 'BA');
+  p = E.planSwap(s, WEEK, 'A', 2, 'B', 1);                           // A's Wed <-> B's Tue
+  assert.strictEqual(p.problems.length, 0, p.problems.join()); p.apply(s);
+  assert.strictEqual(at(1, 2) + at(0, 1), 'BA');
+  assert(/takes A's Wed/.test(p.text), p.text);
+  p = E.planSwap(s, WEEK, 'A', 1, 'C', 0);                           // C is on leave Monday
+  assert(/C isn't working Mon/.test(p.error));
+  p = E.planSwap(s, WEEK, 'A', 0, 'C', null);                        // give A's Monday to C (on leave)
+  assert(p.problems.some(m => /C: Annual leave/.test(m)), p.problems.join());
+  p = E.planSwap(s, WEEK, 'A', 0, 'M', null);                        // a man on a female-only run
+  assert(p.problems.some(m => /female only/.test(m)), p.problems.join());
+  assert.strictEqual(at(1, 0), 'A', 'checking a swap must not change anything');
+});
+
+test('half days: split places with their own times, drivers per half, double booking by time, half counts', () => {
+  const s = E.newState();
+  s.carers = [carer('D1', 'F', true, 5), carer('D2', 'F', true, 5), carer('N1', 'F', false, 5, { notWith: ['N3'] }), carer('N2', 'F', false, 5), carer('N3', 'F', false, 5)];
+  s.runs = [run('R1', 'double'), run('R2', 'single')];
+  const w = E.getWeek(s, WEEK);
+  const cell = E.getCell(w, s.runs[0], 0);
+  cell.slots[0] = { c: null, locked: true, override: false, parts: [{ c: 'D1', from: '07:00', to: '14:00' }, { c: 'N1', from: '14:00', to: '21:00' }] };
+  cell.slots[1] = { c: 'N2', locked: true, override: false };
+  let msgs = E.validate(s, WEEK).list.filter(i => /^R1 Mon/.test(i.msg)).map(i => i.msg).join(' | ');
+  assert(/No driver 14:00–21:00/.test(msgs) && !/No driver 07:00/.test(msgs), msgs);
+  cell.slots[0].parts[1].c = 'D2';
+  msgs = E.validate(s, WEEK).list.filter(i => /^R1 Mon/.test(i.msg)).map(i => i.msg).join(' | ');
+  assert(!/No driver/.test(msgs), msgs);
+  // morning on R1, afternoon on R2 is fine; overlapping times are double booked
+  const c2 = E.getCell(w, s.runs[1], 0);
+  c2.slots[0] = { c: null, locked: true, override: false, parts: [{ c: 'D2', from: '07:00', to: '13:00' }, { c: 'D1', from: '14:00', to: '21:00' }] };
+  msgs = E.validate(s, WEEK).list.map(i => i.msg).join(' | ');
+  assert(!/D1.*double booked/.test(msgs), 'AM on one run + PM on another should be fine: ' + msgs);
+  assert(!/D2.*double booked/.test(msgs), 'D2 works 14:00–21:00 on R1 and 07:00–13:00 on R2 – no overlap: ' + msgs);
+  c2.slots[0].parts[0].to = '15:00';                               // now overlaps D2's afternoon on R1
+  msgs = E.validate(s, WEEK).list.map(i => i.msg).join(' | ');
+  assert(/D2 \(07:00–15:00\): double booked/.test(msgs), msgs);
+  c2.slots[0].parts[0].to = '13:00';
+  // half days count as half towards days per week, but as a day worked for the other rules
+  const v = E.validate(s, WEEK).carers;
+  assert.strictEqual(v.D1.count, 1, 'two halves on one day = 1 day');
+  assert.strictEqual(v.N2.count, 1);
+  cell.slots[0].parts[1].c = 'N3'; cell.slots[0].parts[0].c = 'D1';
+  assert.strictEqual(E.validate(s, WEEK).carers.N3.count, 0.5);
+  assert.strictEqual(E.validate(s, WEEK).carers.N3.days[0], true);
+  // can't-work-with only applies when the times overlap: N3 (PM) and N1 (not on) / N2 (whole day) etc.
+  cell.slots[1].c = 'N1';                                           // N1 whole day, N3 in the afternoon -> clash
+  assert(E.validate(s, WEEK).list.some(i => /N1 and N3 can't work together|N3 and N1 can't work together/.test(i.msg)));
+  cell.slots[0].parts = [{ c: 'N3', from: '07:00', to: '12:00' }, { c: 'D2', from: '12:00', to: '21:00' }];
+  cell.slots[1] = { c: null, locked: true, override: false, parts: [{ c: 'D1', from: '07:00', to: '12:00' }, { c: 'N1', from: '12:00', to: '21:00' }] };
+  assert(!E.validate(s, WEEK).list.some(i => /can't work together/.test(i.msg)), 'N3 morning and N1 afternoon never overlap');
+  // auto-fill leaves split places alone and fills around them
+  const before = JSON.stringify(E.getCell(w, s.runs[0], 0));
+  E.autoFill(s, WEEK, { random: seeded(9) });
+  assert.strictEqual(JSON.stringify(E.getCell(w, s.runs[0], 0)), before);
+  check(s);
+  // what was shared includes the times
+  E.markShared(s, WEEK);
+  E.getCell(w, s.runs[0], 0).slots[0].parts[0].from = '08:00';
+  const ch = E.changesSinceShared(s, WEEK).map(x => `${x.carer.id}: ${x.was} -> ${x.now}`).join(' | ');
+  assert(/N3: R1 07:00–12:00 -> R1 08:00–12:00/.test(ch), ch);
+});
+
 function placementsOf(s, weeks) {
   const worked = {}, runs = {}; // worked[id] = flat day list; runs[id][weekIndex] = {runId: days}
   for (const c of s.carers) { worked[c.id] = []; runs[c.id] = []; }

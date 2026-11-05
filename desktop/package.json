@@ -33,15 +33,19 @@
     },
     "win": {
       "target": [
-        "nsis"
-      ],
-      "artifactName": "CareSchedule-Setup-${version}.${ext}"
+        "nsis",
+        "portable"
+      ]
     },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true
+      "createDesktopShortcut": true,
+      "artifactName": "CareSchedule-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "CareSchedule-Portable-${version}.${ext}"
     },
     "mac": {
       "target": [
