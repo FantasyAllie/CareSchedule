@@ -1707,7 +1707,9 @@ function driveSettingsPanel() {
     <p>This rota is kept in your shared Google Drive folder${drive.me ? `, and you're signed in as <b>${esc(drive.me)}</b>` : ''}.
       Only one person can have it open at a time – press <b>Close</b> at the top when you've finished so others can get in
       (it closes by itself after 15 minutes without use).</p>
-    <p class="muted">A copy is kept each day in the folder's <b>backups</b> folder (the last 30 days). Who can use it is simply who the folder is shared with.</p>
+    <p class="muted">Every change is saved as a new file in the same folder (<i>CareSchedule data … (change N).json</i>), and opening the rota
+      loads the newest one – so to go back to an earlier version, delete the newer files in Drive. The last 200 changes are kept, plus the
+      last change of each day for 30 days. Who can use it is simply who the folder is shared with.</p>
   </div>`;
 }
 function startDrive() {

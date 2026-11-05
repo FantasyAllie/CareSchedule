@@ -69,7 +69,12 @@ folder. Staff open the link on any computer or phone and sign in with their norm
 - It frees up when the person presses **Close** at the top, after **15 minutes without use**, or **90 seconds** after
   their device stops checking in (the tab was closed or the phone went to sleep).
 - The same person opening it on a second device can choose **That's me – open it here instead**.
-- Every change is saved to Drive straight away. The first save each day keeps a copy in a **backups** folder (last 30 days).
+- **Every change is saved as a new file** in the same folder as `CareSchedule.html`, named like
+  `CareSchedule data 2026-11-05 14.32.10 (change 123).json`, and **opening the rota loads the newest one**. To go back
+  to an earlier version, delete the newer files in Drive (or move them out of the folder), then open the rota again.
+  The last **200 changes** are kept, plus the **last change of each day for 30 days** (`KEEP_CHANGES` and `KEEP_DAYS`
+  at the top of `Code.gs`). In a normal shared folder only the person who saved a file can bin it, so each person's
+  old files are cleared out by their own later saves.
 - **Who can use it** is simply who the folder is shared with.
 - It needs a connection (nothing works offline), and phones use the link in the browser rather than the phone apps.
 
@@ -89,8 +94,8 @@ folder. Staff open the link on any computer or phone and sign in with their norm
    app"* – click **Advanced → Go to CareSchedule** and **Allow**.
 6. **On phones:** open the link in Safari or Chrome and choose **Add to Home Screen**, so it opens like an app.
 7. **Bringing in your existing rota:** in the desktop app *Settings & Data → Export backup*, then in the Google Drive
-   version *Settings & Data → Import backup*. (The Google Drive version keeps its own file,
-   `careschedule-online.json`, so it never clashes with the desktop app's data file.)
+   version *Settings & Data → Import backup*. (The Google Drive version keeps its own files, so it never clashes
+   with the desktop app's data file. An exported backup is the same format as the *CareSchedule data* files.)
 
 **Updating** to a newer `CareSchedule.html`: in the Drive folder, right-click the file → *File information → Manage
 versions → Upload new version* (or upload it again – the newest copy is used). There's no need to deploy again. Only

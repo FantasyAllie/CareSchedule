@@ -31,7 +31,8 @@ module.exports = function makeGas(codePath, opts = {}) {
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
     Session: { getActiveUser: () => ({ getEmail: () => currentUser }), getScriptTimeZone: () => 'Europe/London' },
     DriveApp: { getFolderById: id => { if (id !== 'FOLDER123' || !sharedWith.has(currentUser)) throw new Error('No item with the given ID could be found'); return root; } },
-    Utilities: { formatDate: d => (opts.day ? opts.day() : d.toISOString().slice(0, 10)) },
+    // dates in UTC, from the test's clock: 'yyyy-MM-dd' or 'yyyy-MM-dd HH.mm.ss'
+    Utilities: { formatDate: (d, tz, fmt) => { const t = d.toISOString(); return fmt.includes('HH') ? `${t.slice(0, 10)} ${t.slice(11, 19).replace(/:/g, '.')}` : t.slice(0, 10); } },
     HtmlService: { createHtmlOutput: h => { const o = { html: h, title: '', meta: {}, setTitle: t => (o.title = t, o), addMetaTag: (k, v) => (o.meta[k] = v, o) }; return o; } },
     Date: class extends Date { constructor(...a) { if (a.length) super(...a); else super(now()); } static now() { return now(); } },
   };

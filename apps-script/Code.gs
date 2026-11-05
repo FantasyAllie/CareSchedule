@@ -2,7 +2,8 @@
  * CareSchedule – Google Drive version.
  *
  * Serves the rota (CareSchedule.html, kept in a shared Google Drive folder) as a private web page and keeps the
- * data in that same folder. Only ONE person can have the rota open at a time: anyone else who opens the link is
+ * data in that same folder: every change is saved as a new file ("CareSchedule data <date time> (change N).json"),
+ * and opening the rota loads the newest one – so to go back, delete the newer files. Only ONE person can have the rota open at a time: anyone else who opens the link is
  * shown who is using it, and gets in once they close it, leave it unused for 15 minutes, or their device stops
  * checking in for 90 seconds (e.g. the phone went to sleep).
  *
@@ -15,9 +16,11 @@
 const FOLDER_ID = 'PASTE-THE-FOLDER-ID-HERE';
 
 const PAGE_FILE = 'CareSchedule.html';
-const DATA_FILE = 'careschedule-online.json';
-const BACKUP_FOLDER = 'backups';
-const KEEP_BACKUPS = 30;
+const DATA_PREFIX = 'CareSchedule data ';
+const DATA_NAME = /^CareSchedule data (\d{4}-\d{2}-\d{2}) (\d{2}\.\d{2}\.\d{2}) \(change (\d+)\)\.json$/;
+const OLD_DATA_FILE = 'careschedule-online.json'; // used by the first version of this script – still read if it's all there is
+const KEEP_CHANGES = 200; // the newest changes kept in full…
+const KEEP_DAYS = 30;     // …and before those, the last change of each day for this many days
 const STALE_MS = 90 * 1000; // an open page checks in every 20 seconds; after this long without, it is treated as closed
 
 function doGet() {
@@ -48,7 +51,7 @@ function csOpen(session, device, takeOver) {
     }
     const now = Date.now();
     writeLock_({ session, email: me.email, name: me.name, device: String(device || ''), since: lock && lock.session === session ? lock.since : now, ping: now, request: null });
-    const file = newest_(folder_().getFilesByName(DATA_FILE));
+    const file = latestData_(folder_());
     return { ok: true, me: me.name, data: file ? file.getBlob().getDataAsString('UTF-8') : null, version: version_() };
   });
 }
@@ -80,16 +83,11 @@ function csSave(session, expectedVersion, json) {
     if (Number(expectedVersion) !== version_()) return { ok: false, holder: null, reason: 'conflict' };
     JSON.parse(json); // refuse anything that isn't a rota
     const folder = folder_();
-    const file = newest_(folder.getFilesByName(DATA_FILE));
-    if (file) {
-      backup_(folder, file);
-      file.setContent(json);
-    } else {
-      folder.createFile(DATA_FILE, json, 'application/json');
-    }
     const v = version_() + 1;
-    const props = PropertiesService.getScriptProperties();
-    props.setProperty('version', String(v));
+    const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH.mm.ss');
+    folder.createFile(`${DATA_PREFIX}${stamp} (change ${v}).json`, json, 'application/json');
+    PropertiesService.getScriptProperties().setProperty('version', String(v));
+    if (v % 10 === 0) tidy_(folder);
     raw.ping = Date.now();
     writeLock_(raw);
     return { ok: true, version: v };
@@ -168,23 +166,33 @@ function newest_(files) {
   return best;
 }
 
-/** The first save each day keeps the previous copy in backups/, for the last 30 days. */
-function backup_(folder, file) {
-  const day = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
-  const name = `careschedule-online-${day}.json`;
-  const backups = folder.getFoldersByName(BACKUP_FOLDER);
-  const dir = backups.hasNext() ? backups.next() : folder.createFolder(BACKUP_FOLDER);
-  if (dir.getFilesByName(name).hasNext()) return;
-  dir.createFile(name, file.getBlob().getDataAsString('UTF-8'), 'application/json');
+/** Every saved copy in the folder, newest first. */
+function dataFiles_(folder) {
   const all = [];
-  const it = dir.getFiles();
+  const it = folder.getFiles();
   while (it.hasNext()) {
     const f = it.next();
-    if (/^careschedule-online-\d{4}-\d{2}-\d{2}\.json$/.test(f.getName())) all.push(f);
+    const m = DATA_NAME.exec(f.getName());
+    if (m) all.push({ file: f, day: m[1], key: `${m[1]} ${m[2]}`, change: Number(m[3]) });
   }
-  all.sort((a, b) => (a.getName() < b.getName() ? 1 : -1));
-  all.slice(KEEP_BACKUPS).forEach(f => {
-    try { f.setTrashed(true); } catch (e) { /* only the file's owner can bin it in a shared folder – their next save will */ }
+  return all.sort((a, b) => (a.key !== b.key ? (a.key < b.key ? 1 : -1) : b.change - a.change));
+}
+
+function latestData_(folder) {
+  const files = dataFiles_(folder);
+  if (files.length) return files[0].file;
+  return newest_(folder.getFilesByName(OLD_DATA_FILE));
+}
+
+/** Keeps the newest KEEP_CHANGES copies, and before those the last copy of each day for KEEP_DAYS days. */
+function tidy_(folder) {
+  const files = dataFiles_(folder);
+  const cutoff = Utilities.formatDate(new Date(Date.now() - KEEP_DAYS * 864e5), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  const daysKept = new Set();
+  files.forEach((f, i) => {
+    if (i < KEEP_CHANGES) return;
+    if (f.day >= cutoff && !daysKept.has(f.day)) { daysKept.add(f.day); return; }
+    try { f.file.setTrashed(true); } catch (e) { /* only the person who saved a copy can bin it in a shared folder – their next tidy-up will */ }
   });
 }
 
