@@ -97,6 +97,14 @@ folder. Staff open the link on any computer or phone and sign in with their norm
    version *Settings & Data → Import backup*. (The Google Drive version keeps its own files, so it never clashes
    with the desktop app's data file. An exported backup is the same format as the *CareSchedule data* files.)
 
+**If the link says it can't open the CareSchedule folder:** in the script editor choose **checkSetup** in the
+drop-down next to ▷ **Run** and press **Run**. The *Execution log* says what's wrong: the ID is a file's rather than
+the folder's, no folder with that ID is shared with your account, `CareSchedule.html` is missing, and so on. A pasted
+whole folder link works too, since the script picks the ID out of it. After changing `Code.gs`, deploy a **new
+version** (*Deploy → Manage deployments → ✏️ Edit → Version: New version → Deploy*), because a deployment keeps the
+code as it was. *Deploy → Test deployments* gives a link that always runs the latest saved code. If several Google
+accounts are signed in to the browser, open the link in a private window.
+
 **Updating** to a newer `CareSchedule.html`: in the Drive folder, right-click the file → *File information → Manage
 versions → Upload new version* (or upload it again – the newest copy is used). There's no need to deploy again. Only
 redeploy (*Deploy → Manage deployments → Edit → New version*) if `Code.gs` itself changes.

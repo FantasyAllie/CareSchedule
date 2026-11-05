@@ -16,8 +16,8 @@ check('serves the page with a phone-friendly viewport', () => {
   assert.strictEqual(out.meta.viewport, 'width=device-width, initial-scale=1');
 });
 check('someone the folder is not shared with is refused', () => {
-  assert.ok(/don't have access/.test(gas.doGet('eve@x.uk').html));
-  assert.throws(() => S('eve@x.uk', 'csOpen', 'e1', 'PC', false), /don't have access/);
+  assert.ok(/Can't open the CareSchedule folder as eve@x\.uk/.test(gas.doGet('eve@x.uk').html));
+  assert.throws(() => S('eve@x.uk', 'csOpen', 'e1', 'PC', false), /Can't open the CareSchedule folder/);
 });
 check('first person in gets an empty rota', () => {
   const r = S('sarah@x.uk', 'csOpen', 's1', 'PC', false);
@@ -117,5 +117,19 @@ check('still opens a rota saved by the first version of this script', () => {
   const g2 = makeGas(path.join(root, 'apps-script', 'Code.gs'), { page: path.join(root, 'CareSchedule.html'), sharedWith: ['a@x.uk'] });
   g2.root.createFile('careschedule-online.json', '{"old":true}');
   assert.strictEqual(g2.call('a@x.uk', 'csOpen', ['a1', 'PC', false]).data, '{"old":true}');
+});
+check('a whole folder link or stray spaces pasted as the ID still work', () => {
+  for (const id of [' FOLDER123 ', 'https://drive.google.com/drive/folders/FOLDER123?usp=sharing', 'https://drive.google.com/drive/u/0/folders/FOLDER123', 'FOLDER123?usp=drive_link']) {
+    const g = makeGas(path.join(root, 'apps-script', 'Code.gs'), { page: path.join(root, 'CareSchedule.html'), sharedWith: ['a@x.uk'], folderId: id });
+    assert.ok(g.doGet('a@x.uk').html.includes('<title>CareSchedule</title>'), id);
+  }
+});
+check('checkSetup says what is wrong', () => {
+  const run = (id, who) => makeGas(path.join(root, 'apps-script', 'Code.gs'), { page: path.join(root, 'CareSchedule.html'), sharedWith: ['a@x.uk'], folderId: id }).checkSetup(who || 'a@x.uk');
+  assert.ok(/✓ Folder found[\s\S]*✓ CareSchedule\.html found[\s\S]*No rota saved yet/.test(run('FOLDER123')));
+  assert.ok(/That ID is a FILE \("CareSchedule\.html"\)/.test(run('FILE456')));
+  assert.ok(/No folder with that ID can be opened by this account/.test(run('WRONG')));
+  assert.ok(/isn't shared with b@x\.uk/.test(run('FOLDER123', 'b@x.uk')));
+  assert.ok(/has not been filled in/.test(run('PASTE-THE-FOLDER-ID-HERE')));
 });
 console.log(`\n${passed} checks passed`);
