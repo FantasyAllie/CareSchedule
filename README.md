@@ -1,7 +1,8 @@
 # CareSchedule
 
 An offline weekly scheduler for domiciliary care runs. It works on **Windows and Mac** with **no internet**, and optionally
-shares one rota across the office computers and **iPhone and Android** work phones (see *Shared storage* and *Phone apps*).
+shares one rota across the office computers and work phones – either from a **Google Drive folder** (one person at a time)
+or through **Supabase** with **iPhone and Android** apps (see *Google Drive version*, *Shared storage* and *Phone apps*).
 
 ## Desktop app (recommended)
 
@@ -55,6 +56,45 @@ computer you're on).
 In the browser, data is saved in that browser on that computer. Use **Export backup** regularly (and to move
 data to another computer), and **Import backup** to restore. Always open the file from the same location
 in the same browser, otherwise the browser treats it as a fresh copy.
+
+## Google Drive version – one person at a time, nothing else to sign up for
+
+The rota can also run entirely from a **Google Drive folder**: a small Google Apps Script (in
+[`apps-script/Code.gs`](apps-script/Code.gs)) serves the page as a private web link, and the data is a file in that
+folder. Staff open the link on any computer or phone and sign in with their normal Google account.
+
+- **Only one person can have the rota open at a time.** Anyone else who opens the link sees *🔒 In use – Sarah has the
+  rota open on iPhone (since 9:05)* and is kept out. Their page checks every 15 seconds and opens the rota for them as
+  soon as it's free. They can press **Ask them to close it**: Sarah is asked, and can close it with one tap.
+- It frees up when the person presses **Close** at the top, after **15 minutes without use**, or **90 seconds** after
+  their device stops checking in (the tab was closed or the phone went to sleep).
+- The same person opening it on a second device can choose **That's me – open it here instead**.
+- Every change is saved to Drive straight away. The first save each day keeps a copy in a **backups** folder (last 30 days).
+- **Who can use it** is simply who the folder is shared with.
+- It needs a connection (nothing works offline), and phones use the link in the browser rather than the phone apps.
+
+### Setting it up (about 10 minutes)
+
+1. In Google Drive make a folder, e.g. **CareSchedule**, and upload **`CareSchedule.html`** into it. **Share** the
+   folder with everyone who uses the rota, as **Editor**.
+2. Open the folder and copy its ID – the long code at the end of the address, after `/folders/`.
+3. Go to [script.google.com](https://script.google.com) → **New project**, name it *CareSchedule*. Replace everything in
+   `Code.gs` with the contents of [`apps-script/Code.gs`](apps-script/Code.gs), paste the folder ID into
+   `FOLDER_ID` at the top, and press **Save**.
+4. **Deploy → New deployment →** ⚙ **Web app**. Set *Execute as* to **User accessing the web app** and *Who has access*
+   to **Anyone with a Google account**, then **Deploy**. Copy the **Web app** link and send it to the staff.
+   (Only people the folder is shared with can actually open the rota; anyone else is told they don't have access.)
+5. The first time each person opens the link, Google asks them to allow it to use their Drive (that's where the rota
+   is). Because it's your own private script rather than a published app, Google shows *"Google hasn't verified this
+   app"* – click **Advanced → Go to CareSchedule** and **Allow**.
+6. **On phones:** open the link in Safari or Chrome and choose **Add to Home Screen**, so it opens like an app.
+7. **Bringing in your existing rota:** in the desktop app *Settings & Data → Export backup*, then in the Google Drive
+   version *Settings & Data → Import backup*. (The Google Drive version keeps its own file,
+   `careschedule-online.json`, so it never clashes with the desktop app's data file.)
+
+**Updating** to a newer `CareSchedule.html`: in the Drive folder, right-click the file → *File information → Manage
+versions → Upload new version* (or upload it again – the newest copy is used). There's no need to deploy again. Only
+redeploy (*Deploy → Manage deployments → Edit → New version*) if `Code.gs` itself changes.
 
 ## Shared storage – one rota on every device
 
@@ -290,4 +330,5 @@ and a random shuffle (see `WEIGHTS` in the engine).
 ```
 node tests/engine.test.js          # the auto-fill rules
 cd supabase/test && npm ci && npm test   # the shared-storage rules (runs setup.sql in a test database)
+node apps-script/test/code.test.js     # the Google Drive version's one-person-at-a-time rules
 ```

@@ -1,7 +1,7 @@
 name: Build phone apps
 
 # Builds the Android app and the iPhone app on GitHub's machines, to prove both still compile after a
-# change, and checks the shared-storage (Supabase) rules.
+# change, and checks the shared-storage rules (Supabase, and the Google Drive version).
 # - Android: the installable .apk is under the run's "Artifacts" section (CareSchedule-android).
 #   It is signed with your own key if the four CS_* secrets are set (Settings → Secrets → Actions),
 #   so updates install over the top; otherwise it is a debug build.
@@ -10,10 +10,10 @@ name: Build phone apps
 on:
   workflow_dispatch:
   pull_request:
-    paths: ['CareSchedule.html', 'apps/**', 'supabase/**', '.github/workflows/phone-apps.yml']
+    paths: ['CareSchedule.html', 'apps/**', 'apps-script/**', 'supabase/**', '.github/workflows/phone-apps.yml']
   push:
     branches: [main]
-    paths: ['CareSchedule.html', 'apps/**', 'supabase/**', '.github/workflows/phone-apps.yml']
+    paths: ['CareSchedule.html', 'apps/**', 'apps-script/**', 'supabase/**', '.github/workflows/phone-apps.yml']
 
 jobs:
   shared-storage:
@@ -29,6 +29,9 @@ jobs:
       - run: npm ci
       - name: Check the Supabase rules (who can see, edit and save)
         run: npm test
+      - name: Check the Google Drive version (one person at a time)
+        working-directory: apps-script/test
+        run: node code.test.js
 
   android:
     runs-on: ubuntu-latest

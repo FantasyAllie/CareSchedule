@@ -1540,11 +1540,186 @@ const cloud = {
   cachedAt: null,
   error: null,
 };
-const cloudOn = () => !!(cloud.cfg && cloud.cfg.url && cloud.cfg.key);
+const cloudOn = () => !!(cloud.cfg && cloud.cfg.url && cloud.cfg.key) && !(window.google && window.google.script && window.google.script.run);
 function deviceName() {
   if (nativeCfg && nativeCfg.device) return nativeCfg.device;
   const ua = navigator.userAgent;
   return /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android phone' : desktop ? 'desktop app' : 'web browser';
+}
+
+// ---------- Google Drive version (served by Google Apps Script – see apps-script/Code.gs) ----------
+// The rota is a file in a shared Google Drive folder. Only ONE person can have it open at a time: anyone else who
+// opens the link is told who is using it and gets in as soon as they close it (or after 15 minutes without use).
+const gasRun = (window.google && window.google.script && window.google.script.run) || null;
+const driveOn = () => !!gasRun;
+const DRIVE_TICK_MS = 5000, DRIVE_PING_MS = 20000, DRIVE_RETRY_MS = 15000, DRIVE_IDLE_MS = 15 * 60 * 1000;
+const drive = {
+  mode: 'opening',      // 'opening' | 'in' | 'blocked' | 'closed' | 'error'
+  session: Date.now().toString(36) + Math.random().toString(36).slice(2, 10), // this open page
+  holder: null,         // who has it open, when we can't get in: { name, device, since, mine, asked }
+  me: null, version: 0, empty: false,
+  pending: null, uploading: false, saveError: null, connError: false,
+  lastActive: Date.now(), lastPing: 0, lastTry: 0, busy: false,
+  asked: false, answered: null, note: null, error: null,
+};
+const gasCall = (fn, ...args) => new Promise((resolve, reject) =>
+  gasRun.withSuccessHandler(resolve).withFailureHandler(e => reject(e instanceof Error ? e : new Error(String(e && e.message || e))))[fn](...args));
+const sinceText = t => new Date(t).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+
+async function driveOpen(takeOver) {
+  drive.lastTry = Date.now();
+  try {
+    const r = await gasCall('csOpen', drive.session, deviceName(), !!takeOver);
+    drive.connError = false;
+    if (!r.ok) {
+      if (drive.mode !== 'blocked' || JSON.stringify(drive.holder) !== JSON.stringify(r.holder)) { drive.mode = 'blocked'; drive.holder = r.holder; render(); }
+      return;
+    }
+    drive.me = r.me; drive.version = r.version; drive.empty = !r.data;
+    drive.holder = null; drive.asked = false; drive.note = null; drive.saveError = null; drive.pending = null;
+    state = r.data ? withDefaults(JSON.parse(r.data)) : newState();
+    lastSaved = stateJson(state);
+    undoStack.length = 0;
+    drive.mode = 'in'; drive.lastActive = drive.lastPing = Date.now();
+    render();
+  } catch (e) {
+    drive.mode = 'error'; drive.error = e.message; render();
+  }
+}
+
+async function driveUpload() {
+  if (drive.uploading || !drive.pending || drive.mode !== 'in') return;
+  drive.uploading = true;
+  const json = drive.pending;
+  refreshDriveBar();
+  try {
+    const r = await gasCall('csSave', drive.session, drive.version, json);
+    drive.uploading = false;
+    if (!r.ok) { driveLost(r.holder); return; }
+    drive.version = r.version; drive.empty = false; drive.saveError = null; drive.connError = false;
+    if (drive.pending === json) drive.pending = null;
+  } catch (e) {
+    drive.uploading = false;
+    drive.saveError = e.message; // tried again on the next check
+  }
+  refreshDriveBar();
+  if (drive.pending && !drive.saveError) driveUpload();
+}
+
+// someone else got in (we stopped checking in for a while, or the same person opened it on another device)
+function driveLost(holder) {
+  const unsaved = !!drive.pending;
+  drive.pending = null;
+  drive.holder = holder || null;
+  drive.mode = holder ? 'blocked' : 'closed';
+  drive.note = (holder && holder.mine ? 'You opened the rota on another device, so it was closed here.'
+    : holder ? `${holder.name} opened the rota while this screen wasn't being used.`
+    : 'The rota was closed here because this screen stopped checking in (for example the phone went to sleep).') +
+    (unsaved ? ' Your last change could not be saved.' : '');
+  render();
+}
+
+async function driveClose(why) {
+  if (drive.mode !== 'in') return;
+  if (drive.pending) await driveUpload();
+  if (drive.pending) { alert(`Your last change hasn't been saved yet (${drive.saveError || 'still saving'}). Check the connection and try again.`); return; }
+  try { await gasCall('csClose', drive.session); } catch (_) { /* it frees itself after 90 seconds anyway */ }
+  drive.mode = 'closed';
+  drive.note = why === 'idle' ? 'The rota was closed after 15 minutes without use, so others can get in.'
+    : why === 'handover' ? 'You closed the rota so they can get in.'
+    : 'You closed the rota, so others can get in now.';
+  render();
+}
+
+async function driveAsk() {
+  try {
+    const r = await gasCall('csAsk', drive.session, deviceName());
+    if (r && r.holder) drive.holder = r.holder;
+    drive.asked = true;
+  } catch (e) { alert('Could not send the request: ' + e.message); }
+  render();
+}
+
+async function driveTick() {
+  if (!driveOn() || drive.busy) return;
+  drive.busy = true;
+  try {
+    const now = Date.now();
+    if (drive.mode === 'in') {
+      if (drive.pending && !drive.uploading) { drive.saveError = null; await driveUpload(); }
+      if (drive.mode === 'in' && now - drive.lastActive > DRIVE_IDLE_MS && !drive.pending) { await driveClose('idle'); return; }
+      if (drive.mode === 'in' && now - drive.lastPing >= DRIVE_PING_MS) {
+        drive.lastPing = now;
+        const r = await gasCall('csPing', drive.session);
+        if (drive.connError) { drive.connError = false; refreshDriveBar(); }
+        if (!r.ok) { driveLost(r.holder); return; }
+        if (r.request && r.request.at !== drive.answered) {
+          drive.answered = r.request.at;
+          if (confirm(`${r.request.name} would like to use the rota${r.request.device ? ' (on ' + r.request.device + ')' : ''}.\n\nClose it now so they can get in?`)) await driveClose('handover');
+        }
+      }
+    } else if ((drive.mode === 'blocked' || drive.mode === 'error') && !document.hidden && now - drive.lastTry >= DRIVE_RETRY_MS) {
+      await driveOpen(false);
+    }
+  } catch (e) {
+    if (!drive.connError) { drive.connError = true; refreshDriveBar(); }
+  } finally {
+    drive.busy = false;
+  }
+}
+
+function driveBar() {
+  if (drive.mode !== 'in') return '';
+  const st = drive.uploading ? 'Saving…' : drive.saveError || drive.connError ? '⚠ Not connected – trying again' : drive.pending ? 'Saving…' : 'Saved ✓';
+  return `<div class="cloudbar edit">🔒 <b>You have the rota open</b> – nobody else can get in until you close it.
+      <span class="savestate">${esc(st)}</span>
+      <button class="btn" data-action="driveClose">Close</button></div>` +
+    (drive.empty ? `<div class="cloudbar">The rota in Google Drive is empty. Go to <b>Settings &amp; Data</b> to <b>Import backup</b> (e.g. exported from the desktop app) or load the sample data.</div>` : '');
+}
+function refreshDriveBar() {
+  const el = document.getElementById('cloudBanner');
+  if (el && drive.mode === 'in') el.innerHTML = driveBar();
+}
+function driveScreen() {
+  const note = drive.note ? `<p class="under">${esc(drive.note)}</p>` : '';
+  if (drive.mode === 'opening') return `<div class="panel signin"><h2>CareSchedule</h2><p>Opening the rota…</p></div>`;
+  if (drive.mode === 'error') return `<div class="panel signin"><h2>CareSchedule</h2>
+    <p class="over">Couldn't open the rota: ${esc(drive.error)}</p>
+    <p class="muted">Check the connection. If it says you don't have access, ask whoever set it up to share the CareSchedule folder with you.</p>
+    <button class="btn primary" data-action="driveOpen">Try again</button></div>`;
+  if (drive.mode === 'closed') return `<div class="panel signin"><h2>CareSchedule</h2>${note}
+    <button class="btn primary" data-action="driveOpen">Open the rota</button></div>`;
+  const h = drive.holder || {};
+  return `<div class="panel signin"><h2>🔒 In use</h2>${note}
+    <p><b>${esc(h.name || 'Someone')}</b> has the rota open${h.device ? ` on ${esc(h.device)}` : ''}${h.since ? ` (since ${esc(sinceText(h.since))})` : ''}.</p>
+    <p class="muted">Only one person can use CareSchedule at a time. This page checks every 15 seconds and opens the rota as soon as they close it.
+      It also frees up by itself if they leave it unused for 15 minutes.</p>
+    <div class="toolbar">
+      <button class="btn primary" data-action="driveOpen">Try now</button>
+      ${h.mine ? '<button class="btn" data-action="driveTakeOver">That\'s me – open it here instead</button>'
+        : drive.asked || h.asked ? '<span class="muted">Asked ✓ – they\'ve been asked to close it.</span>'
+        : '<button class="btn" data-action="driveAsk">Ask them to close it</button>'}
+    </div></div>`;
+}
+function driveSettingsPanel() {
+  return `<div class="panel">
+    <h3 style="margin-top:0">Google Drive</h3>
+    <p>This rota is kept in your shared Google Drive folder${drive.me ? `, and you're signed in as <b>${esc(drive.me)}</b>` : ''}.
+      Only one person can have it open at a time – press <b>Close</b> at the top when you've finished so others can get in
+      (it closes by itself after 15 minutes without use).</p>
+    <p class="muted">A copy is kept each day in the folder's <b>backups</b> folder (the last 30 days). Who can use it is simply who the folder is shared with.</p>
+  </div>`;
+}
+function startDrive() {
+  if (drive.timer) return;
+  drive.timer = setInterval(driveTick, DRIVE_TICK_MS);
+  const active = () => { drive.lastActive = Date.now(); };
+  document.addEventListener('pointerdown', active, true);
+  document.addEventListener('keydown', active, true);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { drive.lastPing = 0; drive.lastTry = 0; driveTick(); } });
+  // best effort: let the next person straight in when this page is closed
+  window.addEventListener('pagehide', () => { if (drive.mode === 'in' && !drive.pending) gasRun.csClose(drive.session); });
+  driveOpen(false);
 }
 
 let deskInfo = desktop ? desktop.info() : null; // data folder, and whether this computer can edit
@@ -1553,6 +1728,7 @@ let state = load();
 let ui = { find: null, carerView: null, carerViewWeeks: 6, swapForm: null, planCount: 4, leaveForm: null, leaveWeeks: 8, reportWeeks: 13, printWhat: 'runs', importPlan: null, tab: 'schedule', week: mondayOf(todayIso()), editCarer: null, editRun: null, report: null, sickForm: null, cover: [] };
 
 function load() {
+  if (driveOn()) return newState(); // filled in when the rota is opened (driveOpen)
   if (cloudOn()) {
     // the copy last seen from shared storage, shown until the latest arrives (and when offline)
     const cached = readLS(CLOUD_CACHE_KEY);
@@ -1603,6 +1779,15 @@ function save(fromUndo) {
   if (dataProblem) return; // never overwrite data we couldn't read
   const json = stateJson(state);
   if (json === lastSaved) return;
+  if (driveOn()) {
+    if (drive.mode !== 'in') { state = withDefaults(JSON.parse(lastSaved)); return; }
+    if (!fromUndo) { undoStack.push(lastSaved); if (undoStack.length > UNDO_LIMIT) undoStack.shift(); }
+    lastSaved = json;
+    drive.pending = json;
+    drive.lastActive = Date.now();
+    driveUpload();
+    return;
+  }
   if (cloudOn()) {
     if (cloud.mode !== 'edit') {
       state = withDefaults(JSON.parse(lastSaved));
@@ -1950,6 +2135,7 @@ if (desktop) {
 }
 
 function viewOnlyBanner() {
+  if (driveOn()) return driveBar();
   if (cloudOn()) return cloudBanner();
   if (!deskInfo || deskInfo.mode !== 'view') return '';
   const since = deskInfo.holder ? new Date(deskInfo.holder.since).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }) : '';
@@ -1961,6 +2147,7 @@ function render() {
   document.getElementById('undoBtn').disabled = !undoStack.length;
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === ui.tab));
   const app = document.getElementById('app');
+  if (driveOn() && drive.mode !== 'in') { app.innerHTML = driveScreen(); return; }
   if (cloudOn() && cloud.mode === 'signedout') { app.innerHTML = signInView(); return; }
   app.innerHTML = `<div id="cloudBanner">${viewOnlyBanner()}</div>` + { schedule: viewSchedule, carers: viewCarers, runs: viewRuns, leave: viewLeave, reports: viewReports, settings: viewSettings }[ui.tab]();
 }
@@ -3099,7 +3286,7 @@ function viewSettings() {
       Carers are kept on the same 2 runs for ${ROTATION_WEEKS} weeks, then moved to a different pair; it also keeps days off together
       and is shuffled, so allocation is random rather than alphabetical. Fill weeks in date order so the history is right.</p>
   </div>
-  <div class="panel">
+  ${driveOn() ? driveSettingsPanel() : `<div class="panel">
     <h3 style="margin-top:0">Shared storage (all devices)</h3>
     ${cloudOn() ? `
       <p>Connected to <code>${esc(cloud.cfg.url)}</code>${cloud.session ? ` as <b>${esc(cloud.me || cloud.session.email)}</b>` : ''}.
@@ -3117,7 +3304,7 @@ function viewSettings() {
       <div class="row"><label>Publishable key <input id="cloudKey" size="40" placeholder="sb_publishable_… (or the anon key, eyJ…)"></label></div>
       <button class="btn primary" data-action="cloudConnect">Connect</button>
       <p class="muted">After connecting you sign in. If the shared storage is empty you can upload this device's data to start it off.</p>`}
-  </div>
+  </div>`}
   <div class="panel">
     <h3 style="margin-top:0">Your data</h3>
     ${desktop ? `<p>Everything is saved automatically to:<br><code>${esc(deskInfo.file)}</code>
@@ -3130,6 +3317,7 @@ function viewSettings() {
       <b>Change data folder…</b> and choose the same shared Drive folder on every computer. Only one computer can make changes at a time –
       the others see it view only, with who has it open, and update as they save.
       ${deskInfo.cloud ? '' : 'Right-click the folder in Drive and choose <i>Available offline</i> so it keeps working without internet.'}</p>`
+    : driveOn() ? `<p>Export a backup to keep your own copy, or to move the rota to the desktop app. Import backup replaces the rota in Google Drive for everyone.</p>`
     : `<p>Everything is stored on this computer only (in this browser) – no internet needed. Export a backup regularly, and use it to move data to another computer.</p>`}
     <div class="toolbar">
       ${desktop ? '<button class="btn" data-action="openDataFolder">Open data folder</button><button class="btn" data-action="chooseFolder">Change data folder…</button>' : ''}
@@ -3383,6 +3571,10 @@ document.getElementById('app').addEventListener('click', e => {
 
     case 'pickDay': ui.day = Number(b.dataset.day); render(); return;
     case 'cloudDone': cloudDoneEditing(); return;
+    case 'driveClose': driveClose(); return;
+    case 'driveOpen': drive.note = null; if (drive.mode !== 'blocked') drive.mode = 'opening'; render(); driveOpen(false); return;
+    case 'driveTakeOver': driveOpen(true); return;
+    case 'driveAsk': driveAsk(); return;
     case 'cloudAsk': cloudAskToEdit(); return;
     case 'cloudStart': cloudStartEditing(); return;
     case 'cloudSignOut': cloudSignOut(); return;
@@ -3543,7 +3735,8 @@ function startCloud() {
   document.addEventListener('visibilitychange', () => { if (!document.hidden) cloudTick(); });
   window.addEventListener('online', () => cloudTick());
 }
-if (cloudOn()) { cloudStart(); startCloud(); }
+if (driveOn()) startDrive();
+else if (cloudOn()) { cloudStart(); startCloud(); }
 if (desktop && desktop.info().notice) alert(desktop.info().notice);
 if (dataProblem) {
   alert(`Your saved data could not be read (${dataProblem}).\n\nNothing will be saved until you restore it: go to Settings & Data → Import backup` +
