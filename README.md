@@ -308,12 +308,16 @@ Auto-fill reads the previous 13 weeks of schedules saved in the app (fill weeks 
   hand is flagged red. The flag comes only from what people have actually worked, so nobody is favoured
   by hand. People working a weekend
   are given both days where possible, so others get whole weekends off.
-- **Preferred runs** – carers are put on their preferred runs first, ahead of the run-pair rotation below,
+- **Preferred runs** – carers are put on their preferred runs first, ahead of the same-run rule below,
   and a final step swaps same-day shifts to move them onto them. A carer set to **Only these runs** is never
   put on any other run (doing it by hand asks for confirmation and is flagged).
-- **Same 2 runs for 3 weeks** – carers are kept on their current pair of runs (e.g. Mon–Wed on Run 2, a day
-  off, then Fri–Sat on Run 4) for 3 weeks, then moved to a different pair. Within a week it avoids a 3rd
-  different run and keeps runs in blocks of days.
+- **Same run all week, for 3 weeks** – where possible a carer works the same run every day they work that
+  week, stays on that run for 3 weeks, then is moved to a different run. As a last step, auto-fill swaps two
+  carers' shifts on the same day (or on several days at once) when that puts them both on fewer runs and every
+  rule still holds. It never changes which days anyone works, and never moves anyone off a preferred run.
+  When the rules or cover make it impossible (e.g. a run needs someone on a day its usual carers are off),
+  the carer covers another run that day. In testing about 9 in 10 shifts were on the carer's main run for the
+  week, and about 3 in 4 carer-weeks were entirely on one run.
 - **No more than 5 days in a row** – counts the days worked at the end of last week (and the start of next
   week, if it is already scheduled). Auto-fill never goes over it; if that would leave a gap, it swaps one of
   a carer's other shifts to someone else so they can cover it. Going over by hand is flagged red. The limit
@@ -335,7 +339,7 @@ Auto-fill reads the previous 13 weeks of schedules saved in the app (fill weeks 
 
 When several carers could fill a slot, it first takes anyone who must work every remaining available day to
 meet their contract, then keeps drivers out of non-driver slots, then weighs up: how far behind on contracted
-days they are, **males first** (changeable in Settings), the weekend, run-pair and days-off preferences above,
+days they are, **males first** (changeable in Settings), the weekend, same-run and days-off preferences above,
 and a random shuffle (see `WEIGHTS` in the engine).
 
 ## Tests
