@@ -15,7 +15,7 @@ module.exports = function makeGas(codePath, opts = {}) {
     return f;
   }
   function mkFolder(name) {
-    const d = { name, files: [], folders: [],
+    const d = { name, files: [], folders: [], getName: () => d.name,
       getFilesByName: n => iter(d.files.filter(f => f.name === n && !f.trashed)),
       getFiles: () => iter(d.files.filter(f => !f.trashed)),
       getFoldersByName: n => iter(d.folders.filter(x => x.name === n)),
@@ -26,18 +26,21 @@ module.exports = function makeGas(codePath, opts = {}) {
   const root = mkFolder('CareSchedule');
   root.files.push(mkFile('CareSchedule.html', fs.readFileSync(opts.page, 'utf8'), 'owner@x.uk'));
   const ctx = {
-    console,
+    console: { log() {} },
     PropertiesService: { getScriptProperties: () => ({ getProperty: k => props.has(k) ? props.get(k) : null, setProperty: (k, v) => props.set(k, String(v)), deleteProperty: k => props.delete(k) }) },
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
     Session: { getActiveUser: () => ({ getEmail: () => currentUser }), getScriptTimeZone: () => 'Europe/London' },
-    DriveApp: { getFolderById: id => { if (id !== 'FOLDER123' || !sharedWith.has(currentUser)) throw new Error('No item with the given ID could be found'); return root; } },
+    DriveApp: {
+      getFolderById: id => { if (id !== 'FOLDER123' || !sharedWith.has(currentUser)) throw new Error('No item with the given ID could be found'); return root; },
+      getFileById: id => { if (id !== 'FILE456' || !sharedWith.has(currentUser)) throw new Error('No item with the given ID could be found'); return root.files[0]; },
+    },
     // dates in UTC, from the test's clock: 'yyyy-MM-dd' or 'yyyy-MM-dd HH.mm.ss'
     Utilities: { formatDate: (d, tz, fmt) => { const t = d.toISOString(); return fmt.includes('HH') ? `${t.slice(0, 10)} ${t.slice(11, 19).replace(/:/g, '.')}` : t.slice(0, 10); } },
     HtmlService: { createHtmlOutput: h => { const o = { html: h, title: '', meta: {}, setTitle: t => (o.title = t, o), addMetaTag: (k, v) => (o.meta[k] = v, o) }; return o; } },
     Date: class extends Date { constructor(...a) { if (a.length) super(...a); else super(now()); } static now() { return now(); } },
   };
   vm.createContext(ctx);
-  const code = fs.readFileSync(codePath, 'utf8').replace("const FOLDER_ID = 'PASTE-THE-FOLDER-ID-HERE';", "const FOLDER_ID = 'FOLDER123';");
+  const code = fs.readFileSync(codePath, 'utf8').replace("const FOLDER_ID = 'PASTE-THE-FOLDER-ID-HERE';", `const FOLDER_ID = ${JSON.stringify(opts.folderId || 'FOLDER123')};`);
   vm.runInContext(code, ctx);
   return {
     root, props,
@@ -48,5 +51,6 @@ module.exports = function makeGas(codePath, opts = {}) {
       return JSON.parse(JSON.stringify(ctx[fn] ? ctx[fn](...args) : vm.runInContext(fn, ctx)(...args)));
     },
     doGet(user) { currentUser = user; return vm.runInContext('doGet', ctx)(); },
+    checkSetup(user) { currentUser = user; return vm.runInContext('checkSetup', ctx)(); },
   };
 };

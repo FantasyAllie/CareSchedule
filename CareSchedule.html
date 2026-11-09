@@ -379,7 +379,7 @@ function computeBookings(state, week) {
 }
 
 const HISTORY_WEEKS = 13; // about 3 months
-const ROTATION_WEEKS = 3; // weeks to stay on the same pair of runs before swapping
+const ROTATION_WEEKS = 3; // weeks to stay on the same run before moving to another
 
 function needsDriver(run) { return run.needsDriver !== false; }
 function isSpecific(run) { return !!(run.allowed && run.allowed.length); }
@@ -473,20 +473,20 @@ function weekendStreak(h) {
   return n;
 }
 
-// The carer's current pair of runs (their 2 most-worked runs in their latest working week) and how many
-// weeks in a row they have mostly worked on that pair.
+// The carer's current run (their most-worked run in their latest working week) and how many weeks in a row
+// they have mostly worked on it. Returned as { runs: [runId], streak }.
 function rotation(h) {
   let i = h.weekRuns.length - 1;
   while (i >= 0 && !Object.keys(h.weekRuns[i]).length) i--;
   if (i < 0) return { runs: [], streak: 0 };
-  const runs = Object.entries(h.weekRuns[i]).sort((a, b) => b[1] - a[1]).slice(0, 2).map(x => x[0]);
+  const runs = Object.entries(h.weekRuns[i]).sort((a, b) => b[1] - a[1]).slice(0, 1).map(x => x[0]);
   let streak = 0;
   for (; i >= 0; i--) {
     const counts = Object.entries(h.weekRuns[i]);
     const total = counts.reduce((n, [, v]) => n + v, 0);
-    if (!total) continue; // a week off (leave etc.) doesn't break the run pair
-    const onPair = counts.reduce((n, [r, v]) => n + (runs.includes(r) ? v : 0), 0);
-    if (onPair / total >= 0.6) streak++; else break;
+    if (!total) continue; // a week off (leave etc.) doesn't break the run
+    const onRun = counts.reduce((n, [r, v]) => n + (runs.includes(r) ? v : 0), 0);
+    if (onRun / total >= 0.5) streak++; else break;
   }
   return { runs, streak };
 }
@@ -501,14 +501,14 @@ const WEIGHTS = {
   weekendDue: 4,        // worked last weekend – aim for a weekend off every 2 weeks
   weekendPair: 1.5,     // work Sat+Sun together (or neither) so weekends off are whole weekends
   sameRunAsYesterday: 1.5, // same run as the day before/after – keeps runs in blocks of days
-  weekRuns: 1.5,        // a run they already have this week
-  thirdRun: 2.5,        // would be a 3rd different run this week
+  weekRun: 2,           // the run they're already on this week – the same run all week where possible (see also sameRunSwaps)
+  otherRun: 3,          // a different run from the one they're on this week
   dayOffRequest: 8,     // the carer asked for this day off
   patternDay: 4,        // one of the days the carer usually works
   offPattern: 2,        // not one of their usual days
-  preferredRun: 4,      // one of the carer's preferred runs (also exempt from the run-pair rotation)
-  keepRotation: 2,      // on their current pair of runs, within ROTATION_WEEKS
-  swapRotation: 3,      // done ROTATION_WEEKS on the same pair – move them on
+  preferredRun: 4,      // one of the carer's preferred runs (also exempt from the run rotation)
+  keepRotation: 3,      // their run from last week, within ROTATION_WEEKS
+  swapRotation: 3,      // done ROTATION_WEEKS on the same run – move them on
   random: 2,            // shuffle so allocation is random, not by name or list order
 };
 
@@ -590,6 +590,15 @@ function autoFill(state, weekStart, opts) {
   const workedOn = (c, d) => d < 0 ? !!hist[c.id].days[hist[c.id].days.length + d]
     : d > 6 ? null : planned.has(d) || booked[d].has(c.id) ? booked[d].has(c.id) : null;
   const runOn = (c, d) => d < 0 ? hist[c.id].lastWeek[7 + d] : d > 6 ? null : dayRun[c.id][d];
+  // the run the carer has most days on so far this week (null before their first shift)
+  const mainRun = c => {
+    let best = null, n = 0;
+    for (const [r, k] of Object.entries(runCount[c.id])) if (k > n) { best = r; n = k; }
+    return best;
+  };
+  // how bunched the carer's week is onto one run (sum of squared days per run) – what sameRunSwaps increases;
+  // e.g. 5 days on one run = 25, 3 + 2 on two runs = 13
+  const runFocus = c => Object.values(runCount[c.id]).reduce((n, k) => n + k * k, 0);
 
   const statusCache = {};
   const ok = (c, d) => {
@@ -684,20 +693,23 @@ function autoFill(state, weekStart, opts) {
       if (d >= 5 && streak[c.id] >= 1) soft -= WEIGHTS.weekendDue;
       if (d === 6) soft += workedOn(c, 5) ? WEIGHTS.weekendPair : -WEIGHTS.weekendPair;
       if (runOn(c, d - 1) === run.id || runOn(c, d + 1) === run.id) soft += WEIGHTS.sameRunAsYesterday;
-      const thisWeek = Object.keys(runCount[c.id]);
-      if (thisWeek.includes(run.id)) soft += WEIGHTS.weekRuns;
-      else if (thisWeek.length >= 2) soft -= WEIGHTS.thirdRun;
+      const main = mainRun(c);
+      // the pull back to their run only applies on days they'd normally work, so it never draws anyone in on a day
+      // outside their usual pattern
+      if (main) soft += main === run.id ? (hasPattern(c) && !onPattern(c, weekStart, d) ? 0 : WEIGHTS.weekRun) : -WEIGHTS.otherRun;
       const r = rot[c.id];
       if (requested(c, d)) soft -= WEIGHTS.dayOffRequest;
-      if (hasPattern(c)) soft += onPattern(c, weekStart, d) ? WEIGHTS.patternDay : -WEIGHTS.offPattern;
+      // off-pattern also outweighs the otherRun penalty other carers get, so keeping them on their runs never
+      // draws someone in on a day outside their usual pattern
+      if (hasPattern(c)) soft += onPattern(c, weekStart, d) ? WEIGHTS.patternDay : -(WEIGHTS.offPattern + WEIGHTS.otherRun);
       if (prefersRun(c, run)) soft += WEIGHTS.preferredRun;
       else if (state.runs.some(p => p.days[d] && prefersRun(c, p) && getCell(week, p, d).slots.some(sl => !sl.c && !sl.parts))) {
         soft -= WEIGHTS.preferredRun; // their preferred run still has a space today
       }
       else if (r.runs.length) {
-        const onPair = r.runs.includes(run.id);
-        if (r.streak < ROTATION_WEEKS) soft += onPair ? WEIGHTS.keepRotation : -WEIGHTS.keepRotation / 2;
-        else soft += onPair ? -WEIGHTS.swapRotation : WEIGHTS.swapRotation / 2;
+        const onRun = r.runs.includes(run.id);
+        if (r.streak < ROTATION_WEEKS) soft += onRun ? WEIGHTS.keepRotation : -WEIGHTS.keepRotation / 2;
+        else soft += onRun ? -WEIGHTS.swapRotation : WEIGHTS.swapRotation / 2;
       }
       soft += WEIGHTS.random * rng();
       return { urgent: left >= remainingAvail(c, d) ? 0 : 1, soft };
@@ -802,6 +814,79 @@ function autoFill(state, weekStart, opts) {
           place(to.q, to.r, d, to.cell, to.i);
         }
       }
+    }
+    return swapped;
+  }
+
+  // Swaps that put carers on the same run all week. Two carers working the same day on different runs change places,
+  // on one day or on several days at once (e.g. A and B swap runs on every day they both work), when that bunches
+  // their weeks onto fewer runs, every rule still holds for both, and nobody is moved off one of their preferred runs.
+  // Shifts only change places within a day, so nobody's days worked change.
+  function sameRunSwaps() {
+    let swapped = 0;
+    const cap = c => capacity(c, true);
+    const keepsPreferred = (c, from, to) => !prefersRun(c, from) || prefersRun(c, to);
+    const spotOf = (c, d) => {
+      for (const r of state.runs) {
+        if (!r.days[d]) continue;
+        const cell = getCell(week, r, d);
+        const i = cell.slots.findIndex(sl => sl.c === c.id);
+        if (i >= 0) return cell.slots[i].locked ? null : { r, cell, i };
+      }
+      return null;
+    };
+    // a and b change places on day d; returns a function that puts them back, or null if a rule stops it
+    const swapDay = (a, b, d) => {
+      const x = spotOf(a, d), y = spotOf(b, d);
+      if (!x || !y || x.r === y.r || !keepsPreferred(a, x.r, y.r) || !keepsPreferred(b, y.r, x.r)) return null;
+      unplace(a, x.r, d, x.cell, x.i);
+      unplace(b, y.r, d, y.cell, y.i);
+      if (eligible(a, y.r, d, { needDriver: needsDriver(y.r) && !hasDriver(y.cell) }, cap, 2, y.cell)) {
+        place(a, y.r, d, y.cell, y.i);
+        if (eligible(b, x.r, d, { needDriver: needsDriver(x.r) && !hasDriver(x.cell) }, cap, 2, x.cell)) {
+          place(b, x.r, d, x.cell, x.i);
+          return () => {
+            unplace(a, y.r, d, y.cell, y.i); unplace(b, x.r, d, x.cell, x.i);
+            place(a, x.r, d, x.cell, x.i); place(b, y.r, d, y.cell, y.i);
+          };
+        }
+        unplace(a, y.r, d, y.cell, y.i);
+      }
+      place(a, x.r, d, x.cell, x.i);
+      place(b, y.r, d, y.cell, y.i);
+      return null;
+    };
+    const trySwap = (a, b, days) => {
+      const before = runFocus(a) + runFocus(b);
+      const undo = [];
+      for (const d of days) {
+        const back = swapDay(a, b, d);
+        if (!back) { undo.reverse().forEach(f => f()); return false; }
+        undo.push(back);
+      }
+      if (runFocus(a) + runFocus(b) > before) return true;
+      undo.reverse().forEach(f => f());
+      return false;
+    };
+    const pool = carers.filter(c => Object.keys(runCount[c.id]).length);
+    for (let round = 0; round < 4; round++) {
+      let changed = 0;
+      for (const a of shuffle(pool.slice(), rng)) {
+        for (const b of pool) {
+          if (a === b) continue;
+          // the days both work on different runs, grouped by which run each is on
+          const groups = {};
+          for (let d = 0; d < 7; d++) {
+            const ra = dayRun[a.id][d], rb = dayRun[b.id][d];
+            if (ra && rb && ra !== rb) (groups[ra + '|' + rb] = groups[ra + '|' + rb] || []).push(d);
+          }
+          for (const days of Object.values(groups)) {
+            if (trySwap(a, b, days)) { swapped += days.length; changed++; continue; }
+            if (days.length > 1) for (const d of days) if (trySwap(a, b, [d])) { swapped++; changed++; }
+          }
+        }
+      }
+      if (!changed) break;
     }
     return swapped;
   }
@@ -921,6 +1006,8 @@ function autoFill(state, weekStart, opts) {
   if (f4) log.push(`Moved ${f4} overtime shift(s) to carers who were short of their days.`);
   const f5 = preferenceSwaps();
   if (f5) log.push(`Swapped ${f5} shift(s) on the same day to put carers on their preferred runs.`);
+  const f8 = sameRunSwaps();
+  if (f8) log.push(`Swapped ${f8} shift(s) between carers on the same day to keep carers on the same run all week.`);
   const f7 = shadowPass();
   if (f7) log.push(`Put trainees on ${f7} shadow shift(s) with experienced carers.`);
   const f6 = opts.useAgency !== false && agency.length ? agencyPass() : 0;
@@ -2215,7 +2302,7 @@ function viewSchedule() {
     const weekendsOff = known.filter(x => !x).length;
     const runName = id => esc((runById(id) || { name: '?' }).name);
     const pair = s.rotation.runs.length
-      ? `Runs: ${s.rotation.runs.map(runName).join(' + ')} – ${s.rotation.streak >= ROTATION_WEEKS ? 'due to swap' : `week ${s.rotation.streak + 1} of ${ROTATION_WEEKS}`}`
+      ? `Run: ${s.rotation.runs.map(runName).join(' + ')} – ${s.rotation.streak >= ROTATION_WEEKS ? 'due to move to another run' : `week ${s.rotation.streak + 1} of ${ROTATION_WEEKS}`}`
       : '';
     const past = c.agency ? '<span class="muted">agency – only used to fill gaps</span>' : known.length
       ? `${weekendsOff} of ${known.length} weekends off · ${weekendBadge(s.weekendStreak)}<br><span class="muted">${pair}</span>`
@@ -3285,7 +3372,7 @@ function viewSettings() {
       Anyone who worked last weekend is steered away from this one, so most people get a weekend off every 2 weeks; anyone who has worked
       the last 2 weekends is automatically flagged ⚑ Weekend off priority and kept off this one, so nobody goes past 3 weeks.
       The flag comes only from what people have worked, so everyone is treated the same.
-      Carers are kept on the same 2 runs for ${ROTATION_WEEKS} weeks, then moved to a different pair; it also keeps days off together
+      Carers are kept on the same run all week where possible, and on that run for ${ROTATION_WEEKS} weeks, then moved to a different one; it also keeps days off together
       and is shuffled, so allocation is random rather than alphabetical. Fill weeks in date order so the history is right.</p>
   </div>
   ${driveOn() ? driveSettingsPanel() : `<div class="panel">

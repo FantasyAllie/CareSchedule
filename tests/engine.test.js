@@ -690,7 +690,45 @@ function rosterState() {
   return s;
 }
 
-test('13 weeks in a row: weekends off, run pairs, days off grouped, full cover', () => {
+test('carers are kept on the same run all week when that is possible', () => {
+  let perfect = 0;
+  for (let i = 0; i < 20; i++) {
+    const s = E.newState();
+    // each run can be covered all week by two carers (4 days + 3 days), so nobody needs a second run
+    s.carers = [carer('A', 'F', true, 4), carer('B', 'F', true, 3), carer('C', 'M', true, 4), carer('D', 'M', true, 3)];
+    s.runs = [run('R1', 'single'), run('R2', 'single')];
+    const r = E.autoFill(s, WEEK, { random: seeded(i * 31 + 7) });
+    assert.strictEqual(r.issues.list.filter(x => /needed/.test(x.msg)).length, 0);
+    check(s);
+    const runsOf = id => new Set(s.runs.filter(rn => [0, 1, 2, 3, 4, 5, 6].some(d => E.getCell(E.getWeek(s, WEEK), rn, d).slots.some(sl => sl.c === id))).map(rn => rn.id));
+    if (s.carers.every(c => runsOf(c.id).size === 1)) perfect++;
+  }
+  assert(perfect >= 18, `everyone on one run in only ${perfect}/20 weeks`);
+});
+
+test('a carer stays on one run for 3 weeks, then moves to another', () => {
+  const s = E.newState();
+  s.carers = [carer('A', 'F', true, 7), carer('B', 'F', true, 7)];
+  s.runs = [run('R1', 'single'), run('R2', 'single')];
+  // A has done 3 weeks on R1, B 3 weeks on R2
+  for (let w = 1; w <= 3; w++) for (let d = 0; d < 5; d++) {
+    const wk = E.getWeek(s, E.addDays(WEEK, -7 * w));
+    E.getCell(wk, s.runs[0], d).slots[0].c = 'A';
+    E.getCell(wk, s.runs[1], d).slots[0].c = 'B';
+  }
+  const rot = E.rotation(E.history(s, WEEK).A);
+  assert.strictEqual(JSON.stringify([rot.runs, rot.streak]), JSON.stringify([['R1'], 3]));
+  let moved = 0;
+  for (let i = 0; i < 10; i++) {
+    E.autoFill(s, WEEK, { random: seeded(i + 500) });
+    const wk = E.getWeek(s, WEEK);
+    const aDays = [0, 1, 2, 3, 4].filter(d => E.getCell(wk, s.runs[1], d).slots[0].c === 'A').length;
+    if (aDays >= 4) moved++;
+  }
+  assert(moved >= 8, `A moved to R2 in only ${moved}/10 weeks`);
+});
+
+test('13 weeks in a row: weekends off, same run all week, days off grouped, full cover', () => {
   const s = rosterState();
   const weeks = [...Array(13)].map((_, i) => E.addDays(WEEK, 7 * i));
   let gaps = 0;
@@ -699,7 +737,7 @@ test('13 weeks in a row: weekends off, run pairs, days off grouped, full cover',
     check(s);
   });
   const { worked, runs } = placementsOf(s, weeks);
-  let lone = 0, offDays = 0, windows = 0, windowsOff = 0, weeksWorked = 0, weeksTwoRuns = 0, longest = 0;
+  let lone = 0, offDays = 0, windows = 0, windowsOff = 0, weeksWorked = 0, weeksOneRun = 0, daysAll = 0, daysOnMain = 0;
   for (const c of s.carers) {
     const days = worked[c.id];
     const wk = weeks.map((_, i) => days[i * 7 + 5] || days[i * 7 + 6]);
@@ -709,20 +747,19 @@ test('13 weeks in a row: weekends off, run pairs, days off grouped, full cover',
     for (const w of days) { inARow = w ? inARow + 1 : 0; assert(inARow <= 5, `${c.id} worked ${inARow} days in a row`); }
     assert.strictEqual(E.restBreaches(d => !!days[d], 0, days.length - 1).length, 0);
     for (let i = 1; i + 1 < days.length; i++) if (!days[i]) { offDays++; if (days[i - 1] && days[i + 1]) lone++; }
-    let pair = null, streak = 0;
     for (const wr of runs[c.id]) {
-      const ids = Object.keys(wr);
-      if (!ids.length) continue;
-      weeksWorked++; if (ids.length <= 2) weeksTwoRuns++;
-      const top = Object.entries(wr).sort((a, b) => b[1] - a[1]).slice(0, 2).map(x => x[0]).sort().join();
-      streak = top === pair ? streak + 1 : 1; pair = top; longest = Math.max(longest, streak);
+      const counts = Object.values(wr);
+      if (!counts.length) continue;
+      weeksWorked++; if (counts.length === 1) weeksOneRun++;
+      daysAll += counts.reduce((a, b) => a + b, 0); daysOnMain += Math.max(...counts);
     }
   }
-  console.log(`     weekend off in ${windowsOff}/${windows} two-week windows; ${weeksTwoRuns}/${weeksWorked} carer-weeks on <=2 runs;` +
-    ` longest same run pair ${longest} weeks; ${lone}/${offDays} single days off; ${gaps} unfilled cells`);
+  console.log(`     weekend off in ${windowsOff}/${windows} two-week windows; ${weeksOneRun}/${weeksWorked} carer-weeks all on one run,` +
+    ` ${daysOnMain}/${daysAll} shifts on the week's main run; ${lone}/${offDays} single days off; ${gaps} unfilled cells`);
   assert.strictEqual(gaps, 0);
   assert(windowsOff / windows > 0.8, 'weekend off every 2 weeks too rarely');
-  assert(weeksTwoRuns / weeksWorked > 0.8, 'too many weeks on 3+ runs');
+  assert(daysOnMain / daysAll > 0.88, 'carers moved between runs too often within a week');
+  assert(weeksOneRun / weeksWorked > 0.65, 'too few weeks spent on a single run');
   assert(lone / offDays < 0.25, 'too many single days off');
 });
 

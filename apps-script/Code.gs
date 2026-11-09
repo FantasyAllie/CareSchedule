@@ -125,12 +125,58 @@ function withLock_(fn) {
 }
 
 function folder_() {
-  if (!FOLDER_ID || FOLDER_ID.indexOf('PASTE') === 0) throw new Error('The folder ID has not been filled in at the top of Code.gs yet.');
+  const id = folderId_();
   try {
-    return DriveApp.getFolderById(FOLDER_ID);
+    return DriveApp.getFolderById(id);
   } catch (e) {
-    throw new Error(`You (${me_().email || 'this account'}) don't have access to the CareSchedule folder – ask whoever set it up to share it with you.`);
+    throw new Error(`Can't open the CareSchedule folder as ${me_().email || 'this account'} (folder ID used: ${id}). ` +
+      'Check the ID is the folder\'s (from its address, after /folders/), that the folder is shared with this account, ' +
+      'and – if you changed Code.gs since deploying – that you deployed a new version. ' +
+      `In the script editor, run checkSetup to see exactly what's wrong. (Google said: ${e.message})`);
   }
+}
+
+/** The folder ID from the top of the file, tidied up in case a whole link or a stray space was pasted. */
+function folderId_() {
+  let id = String(FOLDER_ID || '').trim();
+  const fromLink = /\/folders\/([\w-]+)/.exec(id) || /[?&]id=([\w-]+)/.exec(id);
+  if (fromLink) id = fromLink[1];
+  id = id.split(/[?#&]/)[0];
+  if (!id || id.indexOf('PASTE') === 0) throw new Error('The folder ID has not been filled in at the top of Code.gs yet.');
+  return id;
+}
+
+/**
+ * Run this from the script editor (choose checkSetup next to ▷ Run, then press Run) to check the set-up.
+ * The result is shown in the Execution log at the bottom.
+ */
+function checkSetup() {
+  const lines = [];
+  const say = t => { lines.push(t); console.log(t); };
+  say(`Signed in as: ${Session.getActiveUser().getEmail() || '(unknown)'}`);
+  let id;
+  try { id = folderId_(); } catch (e) { say('✗ ' + e.message); return lines.join('\n'); }
+  say(`Folder ID: ${id}${id !== String(FOLDER_ID).trim() ? ` (tidied up from "${FOLDER_ID}")` : ''}`);
+  let folder;
+  try {
+    folder = DriveApp.getFolderById(id);
+  } catch (e) {
+    try {
+      const file = DriveApp.getFileById(id);
+      say(`✗ That ID is a FILE ("${file.getName()}"), not a folder. Open the folder that contains CareSchedule.html and copy the ID from its address, after /folders/.`);
+    } catch (_) {
+      say(`✗ No folder with that ID can be opened by this account. Either the ID is wrong, or the folder belongs to another Google account and isn't shared with ${Session.getActiveUser().getEmail() || 'this one'}. (Google said: ${e.message})`);
+    }
+    return lines.join('\n');
+  }
+  say(`✓ Folder found: "${folder.getName()}"`);
+  const page = newest_(folder.getFilesByName(PAGE_FILE));
+  say(page ? `✓ ${PAGE_FILE} found (updated ${page.getLastUpdated()})` : `✗ ${PAGE_FILE} is not in that folder – upload it there (the name must be exactly ${PAGE_FILE}).`);
+  const data = latestData_(folder);
+  say(data ? `✓ Latest rota: ${data.getName()}` : '• No rota saved yet – it starts empty; import a backup from Settings & Data.');
+  say('If this all says ✓ but the web link still fails: Deploy → Manage deployments → ✏️ Edit → Version: New version → Deploy ' +
+    '(a deployment keeps the code as it was when deployed). With several Google accounts signed in, open the link in a private window.');
+  return lines.join('\n');
 }
 
 function me_() {
